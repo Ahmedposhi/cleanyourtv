@@ -252,7 +252,8 @@ final class WallpaperPlayer {
         }
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
-        params.topMargin = Math.round(110 * dp);
+        // Icons align to the bottom of the tall header. Sit in the band under them and above the dock.
+        params.topMargin = Math.round(160 * dp);
         params.setMarginEnd(Math.round(62 * dp));
         root.addView(text, params);
         return text;

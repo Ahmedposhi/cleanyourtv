@@ -274,10 +274,11 @@
                                 android:layout_marginTop="2dp"
                                 android:singleLine="true"
                                 android:ellipsize="end"
-                                android:textColor="#D964B5F6"
-                                android:textSize="14sp"
+                                android:textColor="#FFFFFFFF"
+                                android:textSize="17sp"
+                                android:textStyle="bold"
                                 android:fontFamily="@string/font_medium"
-                                android:letterSpacing="0.04"
+                                android:letterSpacing="0.02"
                                 android:visibility="gone" />
                         </LinearLayout>
                     </LinearLayout>
@@ -444,19 +445,19 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="56dp"
             android:orientation="vertical"
             android:clipChildren="false"
             android:clipToPadding="false">
 
-            <FrameLayout
+            <!-- Permanent canvas clip to the pill — icons cannot draw outside. -->
+            <com.gathin.tvhome.DockPillFrameLayout
                 android:id="@+id/dockContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:layout_marginEnd="8dp"
                 android:background="@drawable/dock_slider_bg"
-                android:clipToOutline="true"
                 android:clipChildren="true"
                 android:clipToPadding="true">
 
@@ -464,27 +465,28 @@
                     android:id="@+id/dockGrid"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
+                    android:paddingTop="18dp"
+                    android:paddingBottom="18dp"
+                    android:paddingStart="18dp"
+                    android:paddingEnd="18dp"
                     android:clipToPadding="true"
                     android:clipChildren="true"
                     android:overScrollMode="never"
                     android:scrollbars="none"
                     android:descendantFocusability="afterDescendants" />
-            </FrameLayout>
+            </com.gathin.tvhome.DockPillFrameLayout>
 
             <FrameLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                android:layout_weight="1">
+                android:layout_weight="1"
+                android:layout_marginTop="28dp">
 
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/grid"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:paddingTop="6dp"
+                    android:paddingTop="10dp"
                     android:paddingBottom="36dp"
                     android:paddingStart="10dp"
                     android:paddingEnd="10dp"

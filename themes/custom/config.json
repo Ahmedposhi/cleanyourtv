@@ -36,7 +36,7 @@
   "show_athan": true,
   "show_profile": false,
   "columns": 6,
-  "rows_below_dock": 2,
+  "rows_below_dock": 1,
   "dock_opacity": 100,
   "wallpaper_dim": 15,
   "wallpaper_rotation_minutes": 30,

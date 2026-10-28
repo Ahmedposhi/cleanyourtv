@@ -306,7 +306,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             // uniform_tiles draws the icon, so an app's banner is never loaded. A module card keeps its banner.
             if (!(uniformTiles && card == null)) {
                 banner = bundledBanner(appBanners.get(pkg));
-                if (banner == null) banner = iconTiles.contains(pkg) ? iconBanner(ri.loadIcon(pm), pkg) : loadBanner(pm, ri);
+                if (banner == null) banner = iconTiles.contains(pkg) ? iconBanner(ri.loadIcon(pm)) : loadBanner(pm, ri);
             }
             // The icon is only drawn (and sampled for the glow) when there is no banner, so a tile with a
             // banner skips loading and decoding it.
@@ -364,14 +364,12 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     }
 
     /** icon_tiles: the app's icon centred on a dark banner-shaped tile, for apps whose own banner crops badly. */
-    private Drawable iconBanner(Drawable icon, String pkg) {
+    private Drawable iconBanner(Drawable icon) {
         if (icon == null) return null;
         int w = 320, h = 180, side = 96;
         android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888);
         android.graphics.Canvas canvas = new android.graphics.Canvas(bmp);
-        int bg = 0xFF141722;
-        if ("com.storeahim.obiproplay".equals(pkg)) bg = 0xFFFFFFFF;
-        canvas.drawColor(bg);
+        canvas.drawColor(0xFF141722);
         icon.setBounds((w - side) / 2, (h - side) / 2, (w + side) / 2, (h + side) / 2);
         icon.draw(canvas);
         return new android.graphics.drawable.BitmapDrawable(ctx.getResources(), bmp);
@@ -423,7 +421,20 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             View row = LayoutInflater.from(ctx).inflate(R.layout.row_app_library, parent, false);
             View button = row.findViewById(R.id.btnLibrary);
             button.setOnClickListener(v -> listener.onLibraryRequested());
-            button.setOnFocusChangeListener((v, focused) -> { if (focused) listener.onLibraryFocused(); });
+            float density = parent.getResources().getDisplayMetrics().density;
+            button.setOnFocusChangeListener((v, focused) -> {
+                if (focused) {
+                    GradientDrawable stroke = new GradientDrawable();
+                    stroke.setShape(GradientDrawable.RECTANGLE);
+                    stroke.setColor(Color.TRANSPARENT);
+                    stroke.setCornerRadius(21f * density);
+                    stroke.setStroke(Math.max(2, Math.round(2.5f * density)), 0xE6FFFFFF);
+                    v.setForeground(stroke);
+                    listener.onLibraryFocused();
+                } else {
+                    v.setForeground(null);
+                }
+            });
             button.setOnKeyListener((v, key, event) -> {
                 if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
                 if (key == KeyEvent.KEYCODE_DPAD_UP) listener.onLibraryUp();
@@ -436,7 +447,12 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         float density = parent.getResources().getDisplayMetrics().density;
         int width = parent.getWidth() > 0 ? parent.getWidth() : parent.getMeasuredWidth();
         int inner = width - parent.getPaddingLeft() - parent.getPaddingRight();
-        int w = tileWidthPx(inner, parent.getHeight(), dockSize, rowsBelowDock, dockTitle, dockRow, density), h = tileHeightPx(w);
+        // Split dock+grid: size both from width only so dock tiles and apps-below tiles match.
+        // The height-fit path still assumes one recycler that holds the dock row + rows_below_dock.
+        int w = isDockOnly || dockRow
+                ? tileWidthPx(inner, dockSize, density)
+                : tileWidthPx(inner, parent.getHeight(), dockSize, rowsBelowDock, dockTitle, false, density);
+        int h = tileHeightPx(w);
         View card = v.findViewById(R.id.card);
         ViewGroup.LayoutParams cardLp = card.getLayoutParams();
         cardLp.width = w;
@@ -451,13 +467,11 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             nameLp.height = 0;
             v.setPadding(v.getPaddingLeft(), 0, v.getPaddingRight(), 0);
         } else {
-            nameLp.topMargin = h + Math.round((dockRow ? 7 : 4) * density);
-            if (!dockRow) {
-                // Compact spacing (COMPACT_ITEM_EXTRA_DP): 4dp item padding and a 20dp name instead of 8dp and 22dp.
-                nameLp.height = Math.round(20 * density);
-                int pad = Math.round(4 * density);
-                v.setPadding(v.getPaddingLeft(), pad, v.getPaddingRight(), pad);
-            }
+            // Apps below the dock always use compact name spacing (even when dock_row is on).
+            nameLp.topMargin = h + Math.round(4 * density);
+            nameLp.height = Math.round(20 * density);
+            int pad = Math.round(4 * density);
+            v.setPadding(v.getPaddingLeft(), pad, v.getPaddingRight(), pad);
         }
         name.setLayoutParams(nameLp);
         // A sideways row would stretch a match_parent item across the whole screen: give it a grid column's width.
@@ -502,9 +516,9 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         h.card.setVisibility(View.VISIBLE);
         h.card.setFocusable(true);
         h.name.setText(e.name);
-        // The dock has no labels, unless always_show_names asks for them (DockDecoration then makes room in the band).
-        // In a single row every tile is the dock's kind: the big title above names it.
-        boolean dockKind = isDockOnly || (dockRow && (singleRow || position < dockSize));
+        // Only the real dock row is "dock kind". In the split layout the grid adapter's items are
+        // already apps-below, so position < dockSize must not hide their names or skip the focus lift.
+        boolean dockKind = isDockOnly || (dockRow && singleRow);
         h.name.setVisibility(isDockOnly ? View.GONE : (dockKind && restNameAlpha == 0f ? View.INVISIBLE : View.VISIBLE));
         h.inDock = dockKind;
         boolean focused = h.card.isFocused();   // a rebind after reload() can hit the focused tile
@@ -512,7 +526,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         h.card.setScaleX(focused && animations ? focusScale() : 1f);
         h.card.setScaleY(focused && animations ? focusScale() : 1f);
         h.card.setTranslationY(focused && advancedEffects && !dockKind ? -4f * ctx.getResources().getDisplayMetrics().density : 0f);
-        h.card.setTranslationZ(focused && advancedEffects ? 8f * ctx.getResources().getDisplayMetrics().density : 0f);
+        // Dock Z stays 0 so the shared GlassView rim draws above the tile.
+        h.card.setTranslationZ(focused && advancedEffects && !isDockOnly ? 8f * ctx.getResources().getDisplayMetrics().density : 0f);
         h.banner.setScaleX(focused && advancedEffects ? 1.035f : 1f);
         h.banner.setScaleY(focused && advancedEffects ? 1.035f : 1f);
         // A fully opaque banner covers the whole card (centerCrop), so the card's own fill under it is drawn for
@@ -701,7 +716,10 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     }
 
     float focusScale() {
-        return !animations ? 1f : advancedEffects ? 1.12f : 1.10f;
+        // Same pop as the apps below. Dock stays inside the pill via DockPillFrameLayout clip
+        // (no withLayer / no overshoot on dock), not by disabling scale.
+        if (!animations) return 1f;
+        return advancedEffects ? 1.12f : 1.10f;
     }
 
     /** A vivid colour sampled from the app's banner (or icon), cached per entry; a card's accent when it set one. */
@@ -964,11 +982,14 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
                 view.animate().cancel();
                 banner.animate().cancel();
                 name.animate().cancel();
+                if (isDockOnly) view.setForeground(null);
+                // Same focusScale as grid. Dock skips withLayer/overshoot so the pill clip holds.
                 float scale = !animations ? 1f : advancedEffects ? 1.12f : 1.10f;
                 float s = focused ? scale : 1f;
+                float z = focused && advancedEffects && !isDockOnly ? 8f * density : 0f;
                 if (!animations) {
-                    view.setScaleX(1f);
-                    view.setScaleY(1f);
+                    view.setScaleX(s);
+                    view.setScaleY(s);
                     view.setTranslationY(0f);
                     view.setTranslationZ(0f);
                     banner.setScaleX(1f);
@@ -980,23 +1001,30 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
                     // frames than it saves. The name just appears instead of fading.
                     view.animate().scaleX(s).scaleY(s)
                             .translationY(focused && advancedEffects && !inDock ? -4f * density : 0f)
-                            .translationZ(focused && advancedEffects ? 8f * density : 0f)
+                            .translationZ(z)
                             .setDuration(focused ? Motion.REDUCED_MS : 60)
                             .setInterpolator(new DecelerateInterpolator())
                             .start();
+                    if (advancedEffects) {
+                        banner.animate().scaleX(focused ? 1.035f : 1f).scaleY(focused ? 1.035f : 1f)
+                                .setDuration(focused ? Motion.REDUCED_MS : 60).start();
+                    }
                     name.setAlpha(focused ? 1f : restNameAlpha);
                     // Same place as the full motion's slide ends: the layout's -6dp is only its starting point, and
                     // left there the name overlaps the zoomed tile.
                     // Only on focus: snapping it back to -6dp while it fades out would jump it up over the tile.
                     if (focused) name.setTranslationY(density * 4f);
                 } else {
-                    view.animate().scaleX(s).scaleY(s)
+                    android.view.ViewPropertyAnimator anim = view.animate().scaleX(s).scaleY(s)
                             .translationY(focused && advancedEffects && !inDock ? -4f * density : 0f)
-                            .translationZ(focused && advancedEffects ? 8f * density : 0f)
+                            .translationZ(z)
                             .setDuration(advancedEffects ? (focused ? 220 : 170) : (focused ? 260 : 180))
-                            .setInterpolator(focused && !overshoot ? new DecelerateInterpolator(1.5f)
-                                    : new OvershootInterpolator(focused ? (advancedEffects ? 0.7f : 1.6f) : 0f))
-                            .withLayer().start();
+                            .setInterpolator(isDockOnly || (focused && !overshoot)
+                                    ? new DecelerateInterpolator(1.5f)
+                                    : new OvershootInterpolator(focused ? (advancedEffects ? 0.7f : 1.6f) : 0f));
+                    // withLayer escapes dock clip; grid keeps it for smoother zoom.
+                    if (!isDockOnly) anim.withLayer();
+                    anim.start();
                     if (advancedEffects) {
                         banner.animate().scaleX(focused ? 1.035f : 1f).scaleY(focused ? 1.035f : 1f)
                                 .setDuration(280).start();

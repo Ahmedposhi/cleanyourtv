@@ -2,7 +2,6 @@ package com.gathin.tvhome;
 
 import java.util.Calendar;
 import java.util.Locale;
-import java.util.TimeZone;
 
 /**
  * 100% offline, zero-network mathematical solar calculation of prayer times for Cairo, Egypt.
@@ -11,11 +10,17 @@ import java.util.TimeZone;
  * - Isha: 17.5 degrees
  * - Asr: Shafi'i shadow factor (1.0)
  * - Cairo coordinates: 30.0444 N, 31.2357 E
+ * - Time zone: Egypt standard GMT+2, summer time GMT+3 (device Africa/Cairo
+ *   tables on older Android TV builds often miss the 2023+ DST restoration)
  */
 final class CairoAthan {
 
     static final double LATITUDE = 30.0444;
     static final double LONGITUDE = 31.2357;
+    /** Egypt winter / standard offset (EET). */
+    static final double OFFSET_STANDARD_HOURS = 2.0;
+    /** Egypt summer time offset (EEST / GMT+3). */
+    static final double OFFSET_SUMMER_HOURS = 3.0;
 
     static final class Prayer {
         final String name;
@@ -82,9 +87,9 @@ final class CairoAthan {
         int month = cal.get(Calendar.MONTH) + 1;
         int day = cal.get(Calendar.DAY_OF_MONTH);
 
-        // Resolve Cairo timezone offset in hours (usually UTC+2 or UTC+3 during DST)
-        TimeZone tz = TimeZone.getTimeZone("Africa/Cairo");
-        double tzOffsetHours = tz.getOffset(cal.getTimeInMillis()) / 3600000.0;
+        // Egypt wall-clock offset: GMT+3 in summer, GMT+2 otherwise (do not trust
+        // outdated Android tv Africa/Cairo zoneinfo on Xiaomi / Android 11 boxes).
+        double tzOffsetHours = egyptOffsetHours(year, month, day);
 
         // Julian Day Number
         int a = (14 - month) / 12;
@@ -145,6 +150,38 @@ final class CairoAthan {
         else next = fajr; // After Isha, next is tomorrow's Fajr
 
         return new Schedule(fajr, sunrise, dhuhr, asr, maghrib, isha, next);
+    }
+
+    /**
+     * Egypt DST (restored 2023): summer time GMT+3 from the last Friday of April
+     * through the last Thursday of October; otherwise GMT+2.
+     */
+    static double egyptOffsetHours(int year, int month, int day) {
+        if (year < 2023) {
+            return OFFSET_STANDARD_HOURS;
+        }
+        int dstStart = lastWeekdayOfMonth(year, 4, Calendar.FRIDAY);
+        int dstEnd = lastWeekdayOfMonth(year, 10, Calendar.THURSDAY);
+        int ymd = year * 10000 + month * 100 + day;
+        int start = year * 10000 + 4 * 100 + dstStart;
+        int end = year * 10000 + 10 * 100 + dstEnd;
+        if (ymd >= start && ymd <= end) {
+            return OFFSET_SUMMER_HOURS;
+        }
+        return OFFSET_STANDARD_HOURS;
+    }
+
+    /** Day-of-month for the last {@code weekday} in {@code month} (1=Jan … 12=Dec). */
+    private static int lastWeekdayOfMonth(int year, int month, int weekday) {
+        Calendar c = Calendar.getInstance(Locale.ROOT);
+        c.clear();
+        c.set(Calendar.YEAR, year);
+        c.set(Calendar.MONTH, month - 1);
+        c.set(Calendar.DAY_OF_MONTH, c.getActualMaximum(Calendar.DAY_OF_MONTH));
+        while (c.get(Calendar.DAY_OF_WEEK) != weekday) {
+            c.add(Calendar.DAY_OF_MONTH, -1);
+        }
+        return c.get(Calendar.DAY_OF_MONTH);
     }
 
     private static double hourAngle(double alphaDeg, double latRad, double deltaRad) {

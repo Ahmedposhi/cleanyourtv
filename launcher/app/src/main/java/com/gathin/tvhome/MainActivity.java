@@ -567,6 +567,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
         dockGrid = findViewById(R.id.dockGrid);
         if (dockGrid != null) {
+            dockGrid.setClipChildren(true);
+            dockGrid.setClipToPadding(true);
             dockGrid.setLayoutManager(new GridLayoutManager(this, 1, RecyclerView.HORIZONTAL, false) {
                 @Override
                 public boolean requestChildRectangleOnScreen(@NonNull RecyclerView parent, @NonNull View child,
@@ -653,35 +655,32 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         adapter.setSavedOrder(Order.ranks(savedOrder, dockApps), Order.docked(savedOrder, dockApps));
         grid.setAdapter(adapter);
 
-        // tvOS layout: push the dock row towards the bottom of the screen, leaving room for
-        // rows_below_dock grid rows under it; the rest of the grid stays below until you press Down.
+        // Split dock+grid: the dock sits above the grid in XML, so only keep a modest top inset for
+        // focus zoom/glass. The old "park dock near the bottom" padding assumed one recycler that
+        // held both the dock row and rows_below_dock — that left a huge empty band under the header.
         int rowsBelowDock = cfg.rowsBelowDock;
         grid.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             int h = b - t;
-            // Item height follows the tile size, which follows the columns and the rows that must fit (AppAdapter.tileWidthPx).
             int inner = (r - l) - grid.getPaddingLeft() - grid.getPaddingRight();
-            int tileW = AppAdapter.tileWidthPx(inner, h, COLUMNS, rowsBelowDock, cfg.dockTitle, cfg.dockRow, density);
-            int itemH = AppAdapter.itemHeightPx(AppAdapter.tileHeightPx(tileW), density);
-            int dockRow = itemH + (int) (AppAdapter.DOCK_EXTRA_DP * density);   // item height plus DockDecoration offsets
-            int gridRows = itemH * rowsBelowDock;
-            // Keep the hero below the header when the library is enabled on a short screen,
-            // even when the theme requests an extra visible row below the dock.
-            int shelfClearance = cfg.appLibrary ? hero.getMeasuredHeight() + (int) (40 * density) : 0;
-            int want = Math.max(shelfClearance, h - dockRow - gridRows - (int) (AppAdapter.BOTTOM_ROOM_DP * density));
-            // Where the rows cannot fit even at the smallest tile (3 rows with the title on), the title keeps its
-            // room above the dock and the last rows run off the bottom instead of the title drawing over the clock.
-            if (MainActivity.this.dockRow && cfg.dockTitle && rowsBelowDock > 0) want = Math.max(want, (int) (AppAdapter.TITLE_ROOM_DP * density));
-            // No dock to push down: the grid starts at the top, with room for the first row's zoom and glass.
-            if (!MainActivity.this.dockRow) want = (int) (AppAdapter.TOP_ROOM_DP * density);
-            // A single row never shows the names under its tiles (the title above the row names the app), so the
-            // 7dp gap and 22dp label item_app.xml keeps for them would only lift the row: sit it that much lower.
-            if (singleRow && !cfg.alwaysShowNames) want += (int) (29 * density);
+            int want;
+            if (dockGrid != null) {
+                want = (int) (8 * density);
+            } else {
+                // Legacy single-recycler layout: push the dock row down, leaving room for rows below it.
+                int tileW = AppAdapter.tileWidthPx(inner, h, COLUMNS, rowsBelowDock, cfg.dockTitle, cfg.dockRow, density);
+                int itemH = AppAdapter.itemHeightPx(AppAdapter.tileHeightPx(tileW), density);
+                int dockRowH = itemH + (int) (AppAdapter.DOCK_EXTRA_DP * density);
+                int gridRows = itemH * rowsBelowDock;
+                int shelfClearance = cfg.appLibrary ? hero.getMeasuredHeight() + (int) (40 * density) : 0;
+                want = Math.max(shelfClearance, h - dockRowH - gridRows - (int) (AppAdapter.BOTTOM_ROOM_DP * density));
+                if (MainActivity.this.dockRow && cfg.dockTitle && rowsBelowDock > 0) {
+                    want = Math.max(want, (int) (AppAdapter.TITLE_ROOM_DP * density));
+                }
+                if (!MainActivity.this.dockRow) want = (int) (AppAdapter.TOP_ROOM_DP * density);
+                if (singleRow && !cfg.alwaysShowNames) want += (int) (29 * density);
+            }
             if (grid.getPaddingTop() != want) {
                 grid.setPadding(grid.getPaddingLeft(), want, grid.getPaddingRight(), grid.getPaddingBottom());
-                // A vertical grid parks the dock on the new padding line by scrolling (onTileFocused); a sideways
-                // row cannot scroll vertically, and the layout request made from inside this layout pass is
-                // dropped, so lay the row out again on the next frame. The glass and the title were placed for the
-                // old position, so fit them again once it has moved.
                 if (singleRow) grid.post(() -> {
                     grid.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
                         @Override
@@ -696,8 +695,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     grid.requestLayout();
                 });
             }
-            // Cold start or column count > 4: the first focus can run before the grid has its final width or
-            // padding, leaving the glass at the XML design size until a key is pressed.
             grid.post(this::refitGlass);
         });
 
@@ -758,6 +755,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnInputs.setOnClickListener(v -> showInputs());
         btnWifi.setOnClickListener(v -> openNetworkPill());
         btnVpn.setOnClickListener(v -> openVpnPill());
+        // Keep status green on focus — pill_text drawableTint would otherwise paint the icon black.
+        btnWifi.setOnFocusChangeListener((v, focused) -> {
+            if (wifiOnlineTint != null) updateWifiLabel();
+        });
         btnWifi.setOnLongClickListener(v -> {
             open(systemIntent(Settings.ACTION_WIFI_SETTINGS));
             return true;
@@ -872,10 +873,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
         if (festive) applyFestiveSkin((TextView) btnInputs, (TextView) btnSettings);
 
-        // Hide the glass when focus leaves the tiles.
+        // Hide the glass when focus leaves the tiles / App library pill.
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
             boolean onTile = newF != null && newF.getId() == R.id.card;
-            if (!onTile) hideGlass();
+            boolean onLibrary = newF != null && newF.getId() == R.id.btnLibrary;
+            if (!onTile && !onLibrary) hideGlass();
         });
 
         packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -1736,12 +1738,15 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         Rect r = tileRect;
         r.set(0, 0, card.getWidth(), card.getHeight());
         root.offsetDescendantRectToMyCoords(card, r);
+        // Same GlassView rim as the apps below. Dock cards stay scale=1 so the rim fits inside the
+        // pill padding (DockPillFrameLayout still clips any tile overflow).
         float pad = 6f * density;
         float scale = (isDock && dockAdapter != null ? dockAdapter : adapter).focusScale();
+        float lift = advancedEffects && !isDock ? 4f * density : 0f;
         float w = card.getWidth() * scale + 2 * pad;
         float h = card.getHeight() * scale + 2 * pad;
         float x = r.exactCenterX() - w / 2f;
-        float y = r.exactCenterY() - h / 2f - (advancedEffects && !isDock ? 4f * density : 0f);
+        float y = r.exactCenterY() - h / 2f - lift;
 
         ViewGroup.LayoutParams lp = glass.getLayoutParams();
         if (lp.width != (int) w || lp.height != (int) h || card.getWidth() != glassCardW) {
@@ -1760,6 +1765,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             glassAccent = accent;
             glass.setAccent(accent);
         }
+        glass.bringToFront();
+        glass.setTranslationZ(24f * density);
         if (!glassShown) {
             springX.cancel();
             springY.cancel();
@@ -1814,7 +1821,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         float scale = (inDock && dockAdapter != null ? dockAdapter : adapter).focusScale();
         int w = (int) (card.getWidth() * scale + 2 * pad);
         int h = (int) (card.getHeight() * scale + 2 * pad);
-        if (!glassShown || card.getWidth() != glassCardW || glass.getWidth() != w || glass.getHeight() != h) {
+        if (!glassShown || card.getWidth() != glassCardW || glass.getWidth() != w || glass.getHeight() != h
+                || Math.abs(glass.getTranslationX() - glassTargetX) > 1f
+                || Math.abs(glass.getTranslationY() - glassTargetY) > 1f) {
             onTileFocused(pos, card, inDock);
         }
     }
@@ -2350,8 +2359,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 return true;
             }
             if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
-                int targetCol = Math.min(position, COLUMNS - 1);
+                // Land on the same column in the first apps-below row; scroll that row into view first
+                // so focus does not jump to a recycled/off-screen holder.
+                int targetCol = Math.min(Math.max(0, position), Math.min(COLUMNS - 1, Math.max(0, adapter.appCount() - 1)));
+                if (adapter.appCount() <= 0) return true;
+                grid.stopScroll();
+                grid.scrollToPosition(targetCol);
                 focusGridTile(targetCol);
+                grid.playSoundEffect(SoundEffectConstants.NAVIGATION_DOWN);
                 return true;
             }
             boolean forward = rtlAppGrid ? keyCode == KeyEvent.KEYCODE_DPAD_LEFT : keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
@@ -2397,8 +2412,61 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     @Override public void onLibraryFocused() {
         libraryFocusPending = false;
-        hideGlass();
         hideHero();
+        View button = null;
+        int position = adapter != null ? adapter.appCount() : -1;
+        if (adapter != null && adapter.isLibraryAt(position)) {
+            RecyclerView.ViewHolder holder = grid.findViewHolderForAdapterPosition(position);
+            if (holder != null) button = holder.itemView.findViewById(R.id.btnLibrary);
+        }
+        if (button == null || button.getWidth() == 0) {
+            if (button != null) {
+                final View retry = button;
+                retry.post(() -> {
+                    if (retry.isFocused()) onLibraryFocused();
+                });
+            } else {
+                hideGlass();
+            }
+            return;
+        }
+        Rect r = tileRect;
+        r.set(0, 0, button.getWidth(), button.getHeight());
+        root.offsetDescendantRectToMyCoords(button, r);
+        float pad = 6f * density;
+        float w = button.getWidth() + 2 * pad;
+        float h = button.getHeight() + 2 * pad;
+        float x = r.exactCenterX() - w / 2f;
+        float y = r.exactCenterY() - h / 2f;
+        ViewGroup.LayoutParams lp = glass.getLayoutParams();
+        lp.width = (int) w;
+        lp.height = (int) h;
+        glass.setLayoutParams(lp);
+        glass.setRadius(21f * density);
+        if (glassAccent != 0) {
+            glassAccent = 0;
+            glass.setAccent(0);
+        }
+        glassTargetX = x;
+        glassTargetY = y;
+        glassCardW = button.getWidth();
+        springX.cancel();
+        springY.cancel();
+        glassScrollShift = 0;
+        glassScrollShiftX = 0;
+        if (!glassShown) {
+            glass.setTranslationX(x);
+            glass.setTranslationY(y);
+            if (animations && !reducedMotion) glass.animate().alpha(1f).setDuration(180).start();
+            else glass.setAlpha(1f);
+            glassShown = true;
+        } else if (!animations) {
+            glass.setTranslationX(x);
+            glass.setTranslationY(y);
+        } else {
+            springX.animateToFinalPosition(x);
+            springY.animateToFinalPosition(y);
+        }
     }
 
     /**
@@ -2484,8 +2552,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     @Override public void onLibraryUp() {
         if (adapter.appCount() == 0) { firstTopButton().requestFocus(); return; }
+        // Must use focusGridTile: focusTile() prefers the dock when a split dock exists.
         int lastRow = ((adapter.appCount() - 1) / COLUMNS) * COLUMNS;
-        focusTile(Math.min(lastRow + lastFocused % COLUMNS, adapter.appCount() - 1));
+        int col = Math.max(0, lastGridFocused % COLUMNS);
+        focusGridTile(Math.min(lastRow + col, adapter.appCount() - 1));
     }
 
     private void focusLibrary() {
