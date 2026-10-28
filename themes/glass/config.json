@@ -1,11 +1,15 @@
 {
   "dock_apps": [
     "com.netflix.ninja",
-    "com.google.android.youtube.tv",
-    "com.amazon.amazonvideo.livingroom",
-    "com.disney.disneyplus",
-    "com.wbd.stream",
-    "com.apple.atve.androidtv.appletv"
+    "org.smarttube.stable",
+    "net.mbc.shahidTV",
+    "com.watchit.vod",
+    "com.storeahim.obiproplay",
+    "com.rifftica.proplayerpulse",
+    "com.disneyplus.mea",
+    "com.apple.atve.androidtv.appletv",
+    "com.osn.go",
+    "org.videolan.vlc"
   ],
   "background_color": "#090C14",
   "wallpaper": true,
@@ -15,5 +19,11 @@
   "app_glow": true,
   "glow_style": "horizon",
   "focus_overshoot": false,
-  "advanced_effects": true
+  "advanced_effects": true,
+  "app_keys": [
+    "192:com.watchit.vod",
+    "scan:150:com.watchit.vod",
+    "190:org.smarttube.stable",
+    "scan:425:org.smarttube.stable"
+  ]
 }

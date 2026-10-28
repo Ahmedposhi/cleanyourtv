@@ -1,4 +1,32 @@
 {
+  "dock_apps": [
+    "com.netflix.ninja",
+    "org.smarttube.stable",
+    "net.mbc.shahidTV",
+    "com.watchit.vod",
+    "com.rifftica.proplayerpulse",
+    "com.disneyplus.mea",
+    "com.apple.atve.androidtv.appletv",
+    "com.osn.go",
+    "org.videolan.vlc"
+  ],
   "wallpaper": true,
-  "wallpaper_rotation_minutes": 60
+  "wallpaper_rotation_minutes": 60,
+  "wallpaper_order": "sequential",
+  "wallpaper_true_color": true,
+  "wallpaper_captions": true,
+  "wallpaper_dim": 0,
+  "cinematic_home": false,
+  "dock_glass": true,
+  "dock_opacity": 70,
+  "ambient_glow": false,
+  "app_glow": true,
+  "advanced_effects": true,
+  "icon_only_buttons": true,
+  "app_keys": [
+    "192:com.watchit.vod",
+    "scan:150:com.watchit.vod",
+    "190:org.smarttube.stable",
+    "scan:425:org.smarttube.stable"
+  ]
 }

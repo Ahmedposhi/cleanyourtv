@@ -1,3 +1,14 @@
-001.jpg	Aurora over Abisko, Lapland · Pavel Shyshkouski, CC BY-SA 4.0
-002.jpg	Vasabron and City Hall, Stockholm · Julian Herzog, CC BY 4.0
-003.jpg	Skeppsbron, Stockholm · Arild Vågen, CC BY-SA 2.0
+01-golden-coast.jpg	Golden coast
+02-moon-lake.jpg	Moon lake
+03-aurora.jpg	Aurora
+04-dunes.jpg	Dunes
+05-above-the-clouds.jpg	Above the clouds
+06-mirror-lake.jpg	Mirror lake
+07-tea-hills.jpg	Tea hills
+08-alpenglow.jpg	Alpenglow
+09-city-lights.jpg	City lights
+10-balloon-sunrise.jpg	Balloon sunrise
+11-monsoon.jpg	Monsoon
+12-lighthouse-coast.jpg	Lighthouse coast
+13-autumn-valley.jpg	Autumn valley
+14-dusk-peaks.jpg	Dusk peaks

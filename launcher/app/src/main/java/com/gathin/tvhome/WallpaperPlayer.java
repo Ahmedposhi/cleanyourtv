@@ -165,6 +165,33 @@ final class WallpaperPlayer {
         decoder.shutdownNow();
     }
 
+    /** Advances to the next wallpaper in the collection on demand. */
+    void nextWallpaper() {
+        if (closed || loading || files.isEmpty()) return;
+        List<File> playable = playable();
+        if (playable.isEmpty()) return;
+        File next = WallpaperRotation.next(playable, displayed);
+        if (next == null) return;
+        loading = true;
+        decoder.execute(() -> {
+            Bitmap bitmap = decode(next);
+            root.post(() -> {
+                loading = false;
+                if (closed) {
+                    if (bitmap != null) bitmap.recycle();
+                    return;
+                }
+                if (bitmap != null) {
+                    show(bitmap);
+                    displayed = next.getName();
+                    showCaption(true);
+                    preferences.edit().putString("image", displayed)
+                            .putLong("changed", System.currentTimeMillis()).apply();
+                }
+            });
+        });
+    }
+
     void update() {
         if (!active || closed || loading || files.isEmpty()) return;
         String previous = preferences.getString("image", "");
