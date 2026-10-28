@@ -478,6 +478,8 @@
 
     <!-- Tiles drawn from the app's icon and name instead of its banner (for banners that crop badly). -->
     <string-array name="icon_tiles" translatable="false">
+        <item>org.videolan.vlc</item>
+        <item>com.storeahim.obiproplay</item>
     </string-array>
 
     <!-- Show live weather condition & temperature on the home screen. -->

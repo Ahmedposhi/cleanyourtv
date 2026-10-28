@@ -306,7 +306,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             // uniform_tiles draws the icon, so an app's banner is never loaded. A module card keeps its banner.
             if (!(uniformTiles && card == null)) {
                 banner = bundledBanner(appBanners.get(pkg));
-                if (banner == null) banner = iconTiles.contains(pkg) ? iconBanner(ri.loadIcon(pm)) : loadBanner(pm, ri);
+                if (banner == null) banner = iconTiles.contains(pkg) ? iconBanner(ri.loadIcon(pm), pkg) : loadBanner(pm, ri);
             }
             // The icon is only drawn (and sampled for the glow) when there is no banner, so a tile with a
             // banner skips loading and decoding it.
@@ -364,11 +364,14 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     }
 
     /** icon_tiles: the app's icon centred on a dark banner-shaped tile, for apps whose own banner crops badly. */
-    private Drawable iconBanner(Drawable icon) {
-        int w = 320, h = 180, side = 104;
+    private Drawable iconBanner(Drawable icon, String pkg) {
+        if (icon == null) return null;
+        int w = 320, h = 180, side = 96;
         android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888);
         android.graphics.Canvas canvas = new android.graphics.Canvas(bmp);
-        canvas.drawColor(0xFF15202B);
+        int bg = 0xFF141722;
+        if ("com.storeahim.obiproplay".equals(pkg)) bg = 0xFFFFFFFF;
+        canvas.drawColor(bg);
         icon.setBounds((w - side) / 2, (h - side) / 2, (w + side) / 2, (h + side) / 2);
         icon.draw(canvas);
         return new android.graphics.drawable.BitmapDrawable(ctx.getResources(), bmp);
@@ -442,12 +445,19 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         View name = v.findViewById(R.id.name);
         ViewGroup.MarginLayoutParams nameLp = (ViewGroup.MarginLayoutParams) name.getLayoutParams();
         nameLp.width = w;
-        nameLp.topMargin = h + Math.round((dockRow ? 7 : 4) * density);
-        if (!dockRow) {
-            // Compact spacing (COMPACT_ITEM_EXTRA_DP): 4dp item padding and a 20dp name instead of 8dp and 22dp.
-            nameLp.height = Math.round(20 * density);
-            int pad = Math.round(4 * density);
-            v.setPadding(v.getPaddingLeft(), pad, v.getPaddingRight(), pad);
+        if (isDockOnly) {
+            name.setVisibility(View.GONE);
+            nameLp.topMargin = 0;
+            nameLp.height = 0;
+            v.setPadding(v.getPaddingLeft(), 0, v.getPaddingRight(), 0);
+        } else {
+            nameLp.topMargin = h + Math.round((dockRow ? 7 : 4) * density);
+            if (!dockRow) {
+                // Compact spacing (COMPACT_ITEM_EXTRA_DP): 4dp item padding and a 20dp name instead of 8dp and 22dp.
+                nameLp.height = Math.round(20 * density);
+                int pad = Math.round(4 * density);
+                v.setPadding(v.getPaddingLeft(), pad, v.getPaddingRight(), pad);
+            }
         }
         name.setLayoutParams(nameLp);
         // A sideways row would stretch a match_parent item across the whole screen: give it a grid column's width.
@@ -494,8 +504,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         h.name.setText(e.name);
         // The dock has no labels, unless always_show_names asks for them (DockDecoration then makes room in the band).
         // In a single row every tile is the dock's kind: the big title above names it.
-        boolean dockKind = dockRow && (singleRow || position < dockSize);
-        h.name.setVisibility(dockKind && restNameAlpha == 0f ? View.INVISIBLE : View.VISIBLE);
+        boolean dockKind = isDockOnly || (dockRow && (singleRow || position < dockSize));
+        h.name.setVisibility(isDockOnly ? View.GONE : (dockKind && restNameAlpha == 0f ? View.INVISIBLE : View.VISIBLE));
         h.inDock = dockKind;
         boolean focused = h.card.isFocused();   // a rebind after reload() can hit the focused tile
         h.name.setAlpha(focused ? 1f : restNameAlpha);
