@@ -10,3 +10,17 @@
 010.jpg	Misty rainforest lake, Khao Sok Thailand - Vyacheslav Argenberg, CC BY 4.0
 011.jpg	Misty river dawn, Cherkasy Ukraine - Oleksandr Malyon, CC BY-SA 4.0
 012.jpg	Kuang Si turquoise pool, Laos - Basile Morin, CC BY-SA 4.0
+01-golden-coast.jpg	Golden coast
+02-moon-lake.jpg	Moon lake
+03-aurora.jpg	Aurora
+04-dunes.jpg	Dunes
+05-above-the-clouds.jpg	Above the clouds
+06-mirror-lake.jpg	Mirror lake
+07-tea-hills.jpg	Tea hills
+08-alpenglow.jpg	Alpenglow
+09-city-lights.jpg	City lights
+10-balloon-sunrise.jpg	Balloon sunrise
+11-monsoon.jpg	Monsoon
+12-lighthouse-coast.jpg	Lighthouse coast
+13-autumn-valley.jpg	Autumn valley
+14-dusk-peaks.jpg	Dusk peaks

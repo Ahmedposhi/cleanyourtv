@@ -17,7 +17,7 @@
   "wallpaper": true,
   "wallpaper_rotation_minutes": 30,
   "wallpaper_order": "sequential",
-  "wallpaper_captions": true,
+  "wallpaper_captions": false,
   "wallpaper_true_color": true,
   "wallpaper_dim": 14,
   "greeting_name": "Ahmed & Mona ❤️",
@@ -33,10 +33,27 @@
   "fade_rows": true,
   "focus_overshoot": false,
   "advanced_effects": true,
+  "app_library": true,
+  "library_button": true,
+  "library_ok_opens": true,
+  "tile_menu": true,
+  "wifi_status_color": true,
+  "show_weather": true,
+  "show_athan": true,
   "app_keys": [
+    "190:org.smarttube.stable",
+    "scan:425:org.smarttube.stable",
+    "scan:393:org.smarttube.stable",
+    "193:com.netflix.ninja",
+    "scan:240:com.netflix.ninja",
+    "scan:416:com.netflix.ninja",
+    "194:com.amazon.amazonvideo.livingroom/com.amazon.ignition.IgnitionActivity",
+    "scan:207:com.amazon.amazonvideo.livingroom/com.amazon.ignition.IgnitionActivity",
+    "189:com.amazon.amazonvideo.livingroom/com.amazon.ignition.IgnitionActivity",
     "192:com.watchit.vod",
     "scan:150:com.watchit.vod",
-    "190:org.smarttube.stable",
-    "scan:425:org.smarttube.stable"
+    "scan:580:com.watchit.vod",
+    "284:com.android.tv.settings/.device.apps.AllAppsActivity",
+    "scan:216:com.android.tv.settings/.device.apps.AllAppsActivity"
   ]
 }
