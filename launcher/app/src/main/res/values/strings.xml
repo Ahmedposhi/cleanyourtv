@@ -4,6 +4,12 @@
     <string name="inputs">Inputs</string>
     <string name="wifi">Wi-Fi</string>
     <string name="settings">Settings</string>
+    <string name="recents">Recent apps</string>
+    <string name="action_back">Back</string>
+    <string name="recents_empty">Open an app from Home first — it will show up here</string>
+    <string name="recents_hint">Press to open · Hold to close · Clear all stops every app here</string>
+    <string name="recents_close">Close</string>
+    <string name="recents_clear_all">Clear all</string>
     <string name="choose_input">Inputs</string>
     <string name="connected">Connected</string>
     <string name="standby">Standby</string>
@@ -11,6 +17,12 @@
     <string name="live_tv">Live TV</string>
     <string name="no_inputs">No inputs found</string>
     <string name="more_inputs">More inputs</string>
+    <!-- Long-press Inputs / "back to" row: jump to the other HDMI port Home last used. -->
+    <string name="back_to_input">Back to %1$s</string>
+    <string name="no_other_input">No other input to switch to yet</string>
+    <string name="samsung_switching">Switching Samsung to cable box (HDMI 1)…</string>
+    <string name="samsung_switched">Samsung → HDMI 1 cable box</string>
+    <string name="samsung_allow">Samsung blocked remote control. On the Samsung remote: Home → Settings → Connections → External Device Manager → Device Connection Manager. Turn Access Notification ON, delete CleanTV from Device List, then press Inputs again (popup appears on Samsung Smart Hub, not on the box HDMI).</string>
     <string name="good_morning">Good morning</string>
     <string name="good_afternoon">Good afternoon</string>
     <string name="good_evening">Good evening</string>
@@ -101,6 +113,7 @@
     <string name="dock_edit_hint">Choose the dock place to change and press OK. Back to finish.</string>
     <string name="dock_edit_pick_app">Now choose the app to put there and press OK. Back to choose another place.</string>
     <string name="tile_add_to_dock">Add to dock</string>
+    <string name="tile_remove_from_dock">Remove from dock</string>
     <string name="tile_replace_in_dock">Replace with another app</string>
     <string name="dock_edit_pick_place">Choose the dock place for this app and press OK. Back to cancel.</string>
     <string name="reorder">Reorder apps</string>

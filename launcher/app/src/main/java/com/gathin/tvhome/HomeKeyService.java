@@ -277,6 +277,13 @@ public class HomeKeyService extends AccessibilityService {
         }
         if (RemoteKeys.handle(this, event, inFront(appKeys, frontAppKeys, event.getKeyCode()),
                 holdAppKeys.get(event.getKeyCode()))) return true;
+        // Already on CleanTV Home: Recents opens only after a 3 s Home hold (not a tap).
+        // isInFront is false once another app is resumed, so Home from that app only opens Home.
+        if ((event.getKeyCode() == KeyEvent.KEYCODE_HOME || event.getKeyCode() == KeyEvent.KEYCODE_ALL_APPS)
+                && MainActivity.isInFront()) {
+            handleRecentsHomeHold(event);
+            return true;
+        }
         // home_long_press_home: Android never sees the Home key, so a held press cannot turn into ALL_APPS.
         if (homeLongPressHome && event.getKeyCode() == KeyEvent.KEYCODE_HOME) {
             if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) openHome();
@@ -365,6 +372,19 @@ public class HomeKeyService extends AccessibilityService {
         if (service != null) service.performGlobalAction(GLOBAL_ACTION_POWER_DIALOG);
     }
 
+    /**
+     * Runs a RemoteKeys action word that needs this service (back, home, recents, sleep). Used by the top-bar
+     * pills; false when the helper is not bound or the word is not a global action.
+     */
+    static boolean performAction(String action) {
+        int global = RemoteKeys.globalAction(action, Build.VERSION.SDK_INT);
+        if (global == 0) return false;
+        HomeKeyService service = running;
+        if (service == null) return false;
+        service.performGlobalAction(global);
+        return true;
+    }
+
     static boolean powerOnRedirect(String liveTv, CharSequence pkg, long now, long armedUntil) {
         return !liveTv.isEmpty() && pkg != null && liveTv.contentEquals(pkg) && now < armedUntil;
     }
@@ -417,6 +437,59 @@ public class HomeKeyService extends AccessibilityService {
                 : new Intent(Intent.ACTION_MAIN).setPackage(getPackageName());
         startActivity(open.addCategory(Intent.CATEGORY_HOME)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
+    }
+
+    /** Hold Home this long while already on Home before Recents opens (top-bar pill is still a tap). */
+    static final long RECENTS_HOLD_MS = 1_000L;
+
+    private final Runnable openRecentsHold = this::openRecentsOnHome;
+
+    /**
+     * Tap: stay on Home (or close Recents if it is already open). Hold ≥ {@link #RECENTS_HOLD_MS}: open Recents.
+     * Timer opens while still held; release also opens if held long enough (Xiaomi remotes often cancel early).
+     */
+    private void handleRecentsHomeHold(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            if (event.getRepeatCount() == 0) {
+                handler.removeCallbacks(openRecentsHold);
+                handler.postDelayed(openRecentsHold, RECENTS_HOLD_MS);
+            }
+            return;
+        }
+        if (event.getAction() != KeyEvent.ACTION_UP) return;
+        handler.removeCallbacks(openRecentsHold);
+        if (event.isCanceled()) return;
+        long heldMs = event.getEventTime() - event.getDownTime();
+        if (heldMs >= RECENTS_HOLD_MS) {
+            if (!MainActivity.isRecentsOpen()) openRecentsOnHome();
+            return;
+        }
+        // Short tap while Recents is up: dismiss it.
+        if (MainActivity.isRecentsOpen()) closeRecentsOnHome();
+    }
+
+    /** Home hold while CleanTV is already in front: open Recents (same dialog as the top-bar pill). */
+    private void openRecentsOnHome() {
+        try {
+            startActivity(new Intent(this, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                            | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    .putExtra(MainActivity.EXTRA_OPEN_RECENTS, true));
+        } catch (ActivityNotFoundException | SecurityException ignored) {
+        }
+    }
+
+    /** Short Home while Recents is showing: close it and stay on Home. */
+    private void closeRecentsOnHome() {
+        try {
+            startActivity(new Intent(this, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                            | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    .putExtra(MainActivity.EXTRA_TOGGLE_RECENTS, true));
+        } catch (ActivityNotFoundException | SecurityException ignored) {
+        }
     }
 
     /** stock_home_redirect while Android's Home is still the stock launcher (launcherx on Google TV outranks this

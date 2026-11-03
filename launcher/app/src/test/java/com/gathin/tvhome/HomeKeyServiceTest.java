@@ -16,6 +16,16 @@ public class HomeKeyServiceTest {
         assertFalse(HomeKeyService.isShortPress(1_000, 3_000, 400));
     }
 
+    @Test public void homeTapUnderOneSecondIsTooShortForRecents() {
+        assertTrue(HomeKeyService.isShortPress(1_000, 1_500, HomeKeyService.RECENTS_HOLD_MS));
+        assertTrue(HomeKeyService.isShortPress(1_000, 1_999, HomeKeyService.RECENTS_HOLD_MS));
+    }
+
+    @Test public void homeHoldOfOneSecondOpensRecents() {
+        assertFalse(HomeKeyService.isShortPress(1_000, 2_000, HomeKeyService.RECENTS_HOLD_MS));
+        assertFalse(HomeKeyService.isShortPress(1_000, 3_000, HomeKeyService.RECENTS_HOLD_MS));
+    }
+
     @Test public void firstBindOfANewBootProbes() {
         assertTrue(HomeKeyService.firstBindAfterBoot(12, 11, SOON));
         assertTrue(HomeKeyService.firstBindAfterBoot(1, -1, SOON));
@@ -56,5 +66,11 @@ public class HomeKeyServiceTest {
     @Test public void alwaysGoesHomeAfterScreenOnUntilAKey() {
         assertTrue(HomeKeyService.stillArmed(SOON, SOON + HomeKeyService.SCREEN_ON_WINDOW_MS));
         assertFalse(HomeKeyService.stillArmed(SOON, 0));
+    }
+
+    @Test public void performActionNeedsTheService() {
+        assertFalse(HomeKeyService.performAction("recents"));
+        assertFalse(HomeKeyService.performAction("back"));
+        assertFalse(HomeKeyService.performAction("mute"));
     }
 }

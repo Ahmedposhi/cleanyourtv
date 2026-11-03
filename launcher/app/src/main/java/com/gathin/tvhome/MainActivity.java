@@ -67,6 +67,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
 import android.widget.PopupWindow;
+import android.widget.TextClock;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -201,6 +202,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean showStats;
     /** config.xml inputs_connected_only: the Inputs menu lists only connected inputs, the rest behind "More inputs". */
     private boolean inputsConnectedOnly;
+    /** Theme samsung_tv_host / samsung_tv_key: Inputs switches a Samsung Tizen TV over Wi‑Fi (e.g. to HDMI 1). */
+    private String samsungTvHost = "";
+    private String samsungTvKey = "KEY_HDMI1";
     private boolean shamsi;
     /** greeting_name: said after the greeting, which is shown in capitals. */
     private String greetingName = "";
@@ -269,6 +273,22 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean promptsPaused;
     /** Between onStop and onStart: Home was fully covered by an app, not just by the translucent quick panel. */
     private boolean stopped;
+    /** True while this Home screen is resumed; HomeKeyService uses it for Home-hold Recents. */
+    private static volatile boolean inFront;
+    /** True while the Recents dialog is on screen (HomeKeyService short-Home closes it). */
+    private static volatile boolean recentsOpen;
+    /** HomeKeyService: toggle/close the Recents dialog while Home is already in front. */
+    static final String EXTRA_TOGGLE_RECENTS = "toggle_recents";
+    /** HomeKeyService: open Recents after a 3 s Home hold (does not close if already open). */
+    static final String EXTRA_OPEN_RECENTS = "open_recents";
+
+    static boolean isInFront() {
+        return inFront;
+    }
+
+    static boolean isRecentsOpen() {
+        return recentsOpen;
+    }
     /** Between onStart and onStop: Home is (at least partly) on screen. */
     private boolean started;
     /** Rebuild the tiles on the way back to Home only when apps changed meanwhile (TileRefresh). */
@@ -281,6 +301,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean reordering;
     /** Key of the tile being carried in reorder mode, or null. */
     private String movingKey;
+    /** Split layout: carried tile came from the dock (reorder stays in that zone only). */
+    private boolean movingFromDock;
     /** Tile order when reorder mode started, to save only when something moved. */
     private List<String> orderAtStart;
     /**
@@ -302,6 +324,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     /** Tile menu's "Add to dock": the app waiting for a dock place in edit-dock mode, or null. */
     private String dockEditAppKey;
     private AppLibraryDialog appLibrary;
+    private RecentsDialog recentsDialog;
+    /** Top-bar Recents pill: closing the dialog returns focus here. */
+    private View btnRecentsTop;
     private boolean appLibrarySelection;
     private boolean libraryOkOpens;
     private boolean libraryFocusPending;
@@ -399,6 +424,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private final Runnable minuteTick = new Runnable() {
         @Override
         public void run() {
+            applyEgyptClockZone(clockBlock);
             updateGreeting();
             updateRace();
             // The pill follows the network callbacks and each return to Home; only the diya's flame follows the
@@ -495,6 +521,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (!cfg.dockTitle) hero.setVisibility(View.GONE);
         greeting = findViewById(R.id.greeting);
         clockBlock = findViewById(R.id.leftBlock);
+        applyEgyptClockZone(clockBlock);
         greetingColor = greeting.getCurrentTextColor();
         if (!cfg.showGreeting) greeting.setVisibility(View.GONE);
         if (cfg.headerWhite) {
@@ -545,6 +572,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         raceSessions = findViewById(R.id.raceSessions);
         showStats = cfg.showStats;
         inputsConnectedOnly = cfg.inputsConnectedOnly;
+        samsungTvHost = cfg.samsungTvHost;
+        samsungTvKey = cfg.samsungTvKey;
         shamsi = cfg.shamsiDate;
         lunarDate = findViewById(R.id.lunarDate);
         lunar = cfg.lunarDate;
@@ -567,19 +596,38 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
         dockGrid = findViewById(R.id.dockGrid);
         if (dockGrid != null) {
-            dockGrid.setClipChildren(true);
-            dockGrid.setClipToPadding(true);
+            // false: focus zoom may draw into the pad so the glass rim stays flush (no top/bottom gaps).
+            // DockPillFrameLayout still canvas-clips to the pill edge.
+            dockGrid.setClipChildren(false);
+            dockGrid.setClipToPadding(false);
             dockGrid.setLayoutManager(new GridLayoutManager(this, 1, RecyclerView.HORIZONTAL, false) {
                 @Override
                 public boolean requestChildRectangleOnScreen(@NonNull RecyclerView parent, @NonNull View child,
                                                              @NonNull Rect rect, boolean immediate,
                                                              boolean focusedChildVisible) {
+                    // columns+0.5 + tight pad: if focus is already ~half visible, leave it (keeps the
+                    // Disney edge peek). Otherwise snap to half-cell offsets so BOTH ends show half
+                    // an icon without needing huge empty side padding.
+                    int width = getWidth();
                     int left = child.getLeft();
                     int right = child.getRight();
-                    int dx;
-                    if (left < getPaddingLeft()) dx = left - getPaddingLeft();
-                    else if (right > getWidth() - getPaddingRight()) dx = right - (getWidth() - getPaddingRight());
-                    else dx = 0;
+                    int cell = Math.max(1, child.getWidth());
+                    int peek = cell / 2;
+                    int visible = Math.min(right, width) - Math.max(left, 0);
+                    if (visible >= peek) return false;
+                    int scroll = parent.computeHorizontalScrollOffset();
+                    int range = Math.max(0,
+                            parent.computeHorizontalScrollRange() - parent.computeHorizontalScrollExtent());
+                    int preferred = scroll + (left + right) / 2 - width / 2;
+                    preferred = Math.max(0, Math.min(range, preferred));
+                    if (preferred > 0 && preferred < range) {
+                        preferred = Math.round((preferred - peek) / (float) cell) * cell + peek;
+                    } else if (preferred >= range) {
+                        preferred = range;
+                    } else {
+                        preferred = 0;
+                    }
+                    int dx = preferred - scroll;
                     if (dx == 0) return false;
                     if (immediate || reducedMotion || !animations) parent.scrollBy(dx, 0);
                     else parent.smoothScrollBy(dx, 0);
@@ -590,6 +638,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             dockGrid.setItemAnimator(null);
             dockAdapter = new AppAdapter(this, this, COLUMNS, cfg, true);
             dockGrid.setAdapter(dockAdapter);
+            dockGrid.addOnChildAttachStateChangeListener(new RecyclerView.OnChildAttachStateChangeListener() {
+                @Override
+                public void onChildViewAttachedToWindow(@NonNull View v) {
+                    int pos = dockGrid.getChildAdapterPosition(v);
+                    String key = dockAdapter != null && pos != RecyclerView.NO_POSITION ? dockAdapter.keyAt(pos) : null;
+                    v.setAlpha(tileAlpha(key, pos, true));
+                }
+
+                @Override
+                public void onChildViewDetachedFromWindow(@NonNull View v) {
+                }
+            });
             dockGrid.addOnScrollListener(new RecyclerView.OnScrollListener() {
                 @Override
                 public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
@@ -636,7 +696,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.addOnChildAttachStateChangeListener(new RecyclerView.OnChildAttachStateChangeListener() {
             @Override
             public void onChildViewAttachedToWindow(@NonNull View v) {
-                v.setAlpha(tileAlpha(grid.getChildAdapterPosition(v)));
+                int pos = grid.getChildAdapterPosition(v);
+                String key = adapter != null && pos != RecyclerView.NO_POSITION ? adapter.keyAt(pos) : null;
+                v.setAlpha(tileAlpha(key, pos, false));
             }
 
             @Override
@@ -652,7 +714,16 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         dockApps = cfg.dockApps;
         fillDockLeavesSlots = !cfg.fillDock;
         Order savedOrder = Order.load(Order.file(this));
-        adapter.setSavedOrder(Order.ranks(savedOrder, dockApps), Order.docked(savedOrder, dockApps));
+        // Split dock+grid: a reorder that saved only grid keys (or docked=0) leaves the pill empty.
+        // Drop that file and fall back to dock_apps until the owner reorders again.
+        if (savedOrder != null && dockAdapter != null && !dockApps.isEmpty()) {
+            int recorded = Order.docked(savedOrder, dockApps);
+            if (recorded == 0 || !orderIncludesDockApp(savedOrder, dockApps)) {
+                Order.file(this).delete();
+                savedOrder = null;
+            }
+        }
+        applySavedOrder(savedOrder);
         grid.setAdapter(adapter);
 
         // Split dock+grid: the dock sits above the grid in XML, so only keep a modest top inset for
@@ -752,7 +823,16 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
         btnInputs = findViewById(R.id.btnInputs);
         View btnSettings = findViewById(R.id.btnSettings);
-        btnInputs.setOnClickListener(v -> showInputs());
+        btnInputs.setOnClickListener(v -> {
+            if (SamsungTv.configured(samsungTvHost)) switchSamsungInput();
+            else showInputs();
+        });
+        // Long-press: local Inputs list (or other HDMI) when Samsung Wi‑Fi switch owns the short press.
+        btnInputs.setOnLongClickListener(v -> {
+            if (SamsungTv.configured(samsungTvHost)) showInputs();
+            else openOtherInput();
+            return true;
+        });
         btnWifi.setOnClickListener(v -> openNetworkPill());
         btnVpn.setOnClickListener(v -> openVpnPill());
         // Keep status green on focus — pill_text drawableTint would otherwise paint the icon black.
@@ -774,7 +854,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             else open(systemIntent(Settings.ACTION_SETTINGS));
         });
         btnReorder = findViewById(R.id.btnReorder);
-        if (btnReorder != null) btnReorder.setVisibility(View.GONE);
+        if (btnReorder != null) {
+            // Theme reorder_button: top-bar shortcut into rearrange mode (Settings hold-menu still has it).
+            boolean showReorder = cfg.reorderButton;
+            btnReorder.setVisibility(showReorder ? View.VISIBLE : View.GONE);
+            btnReorder.setFocusable(showReorder);
+            btnReorder.setClickable(showReorder);
+            if (showReorder) btnReorder.setOnClickListener(v -> toggleReorder());
+        }
         btnWallpaper = findViewById(R.id.btnWallpaper);
         if (btnWallpaper != null) {
             btnWallpaper.setVisibility(cfg.wallpaperEnabled ? View.VISIBLE : View.GONE);
@@ -965,26 +1052,48 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     /**
-     * Home pressed while Home is already in front: singleTask delivers it here, then onResume runs.
-     * Back to the top with the first dock tile focused, like the stock launcher. Back from an app
-     * never comes this way, so returning to the app you left from is unchanged (#118).
+     * Home / Recents while this activity is the target: singleTask delivers it here, then onResume runs.
+     * Coming back from an app goes to the first dock tile (#118). Recents opens only via
+     * {@link #EXTRA_OPEN_RECENTS} (3 s Home hold) — never on a short Home or when returning from an app.
      */
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        setIntent(intent);
         if (openLauncherSettingsIfAsked(intent)) return;
         if (openInputsIfAsked(intent)) return;
+        if (intent != null && intent.getBooleanExtra(EXTRA_OPEN_RECENTS, false)) {
+            intent.removeExtra(EXTRA_OPEN_RECENTS);
+            setIntent(intent);
+            if (recentsDialog == null) openRecents();
+            return;
+        }
+        if (intent != null && intent.getBooleanExtra(EXTRA_TOGGLE_RECENTS, false)) {
+            // One-shot: drop the flag so a later Home from an app cannot reopen Recents.
+            intent.removeExtra(EXTRA_TOGGLE_RECENTS);
+            setIntent(intent);
+            if (recentsDialog != null) recentsDialog.close();
+            return;
+        }
         if (intent == null || !intent.hasCategory(Intent.CATEGORY_HOME)) return;
+        // Returning from an app, or a plain Home re-delivery: Home only — Recents must stay closed.
+        if (recentsDialog != null) recentsDialog.close();
         grid.scrollToPosition(0);
         lastFocused = 0;
         lastFocusedKey = adapter.getItemCount() > 0 ? adapter.keyAt(0) : null;
-        if (stopped) {
-            tileRefresh.onHomeAgain();
-        } else {
-            // Still on screen (the quick panel was over it, or Home was already in front): the tiles are current,
-            // so only go back to the first one; rebuilding would replay the entrance animation for nothing.
-            grid.post(() -> focusTile(0));
+        if (stopped) tileRefresh.onHomeAgain();
+        else grid.post(() -> focusTile(0));
+    }
+
+    /** Recents launched an app: dismiss the strip and clear any pending Home Recents flag. */
+    void leaveRecentsForApp() {
+        Intent i = getIntent();
+        if (i != null) {
+            if (i.getBooleanExtra(EXTRA_TOGGLE_RECENTS, false)) i.removeExtra(EXTRA_TOGGLE_RECENTS);
+            if (i.getBooleanExtra(EXTRA_OPEN_RECENTS, false)) i.removeExtra(EXTRA_OPEN_RECENTS);
+            setIntent(i);
         }
+        if (recentsDialog != null) recentsDialog.close();
     }
 
     @Override
@@ -1004,6 +1113,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onResume() {
         super.onResume();
+        inFront = true;
         // A festival that started or ended while Home was in the background: rebuild with or without it.
         if (festive != festival.active(LocalDate.now())) {
             recreate();
@@ -1244,6 +1354,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     @Override
     protected void onPause() {
+        inFront = false;
         super.onPause();
         root.removeCallbacks(showIdleClock);
         endReorder();   // Home or another app while reordering keeps the order so far
@@ -1259,6 +1370,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // Nothing of ours stays on screen over another app; an undecided prompt simply returns next time.
         if (cardPrompt != null) cardPrompt.dismiss();
         if (appLibrary != null) appLibrary.close();
+        if (recentsDialog != null) recentsDialog.close();
         if (openPopup != null) openPopup.dismiss();
     }
 
@@ -1359,11 +1471,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (handleSettingsKey(event)) return true;
         if (tileMenuEnabled && !reordering && openPopup == null && cardPrompt == null
                 && event.getKeyCode() == KeyEvent.KEYCODE_MENU) {
+            boolean menuDock = focusedIsDockTile();
+            AppAdapter menuSrc = menuDock && dockAdapter != null ? dockAdapter : adapter;
             int position = focusedTilePosition();
-            if (position >= 0 && position < adapter.appCount()
-                    && !getPackageName().equals(adapter.packageAt(position))) {
+            if (menuSrc != null && position >= 0 && position < menuSrc.appCount()
+                    && !getPackageName().equals(menuSrc.packageAt(position))) {
                 if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
-                    onTileLongPress(position, getCurrentFocus());
+                    onTileLongPress(position, getCurrentFocus(), menuDock);
                 }
                 return true;
             }
@@ -1405,10 +1519,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
             return true;
         }
-        if (ok && grid.hasFocus()) {
+        boolean onDock = dockGrid != null && dockGrid.hasFocus();
+        if (ok && (grid.hasFocus() || onDock)) {
             // RecyclerView can briefly report NO_POSITION during a move or rebind. Still consume
-            // OK on the grid: falling through would let the focused card open its app in reorder mode.
-            if (!down && pos >= 0) pickUp(pos);
+            // OK: falling through would let the focused card open its app in reorder mode.
+            if (!down && pos >= 0) pickUp(pos, focusedIsDockTile());
             return true;
         }
         return super.dispatchKeyEvent(event);   // arrows navigate; OK on a top-bar pill works as usual
@@ -1418,7 +1533,20 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private int focusedTilePosition() {
         View f = getCurrentFocus();
         if (f == null || f.getId() != R.id.card || !(f.getParent() instanceof View)) return -1;
-        return grid.getChildAdapterPosition((View) f.getParent());
+        View item = (View) f.getParent();
+        if (dockGrid != null) {
+            int dockPos = dockGrid.getChildAdapterPosition(item);
+            if (dockPos != RecyclerView.NO_POSITION) return dockPos;
+        }
+        return grid.getChildAdapterPosition(item);
+    }
+
+    /** True when the focused card belongs to the split dock recycler. */
+    private boolean focusedIsDockTile() {
+        if (dockGrid == null) return false;
+        View f = getCurrentFocus();
+        if (f == null || f.getId() != R.id.card || !(f.getParent() instanceof View)) return false;
+        return dockGrid.getChildAdapterPosition((View) f.getParent()) != RecyclerView.NO_POSITION;
     }
 
     /** The reorder button: turns the mode on (focus goes back to the last tile), or off again. */
@@ -1428,23 +1556,36 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             return;
         }
         if (!beginReorder()) return;
-        focusTile(Math.max(0, Math.min(lastFocused, adapter.movableCount() - 1)));
+        // Stay in the zone last focused — do not jump dock↔grid.
+        if (dockAdapter != null && lastFocusedKey != null && dockAdapter.positionOf(lastFocusedKey) >= 0) {
+            focusDockTile(dockAdapter.positionOf(lastFocusedKey));
+        } else {
+            focusGridTile(Math.max(0, Math.min(lastGridFocused, adapter.movableCount() - 1)));
+        }
         Toast.makeText(this, R.string.reorder_hint, Toast.LENGTH_LONG).show();
     }
 
     /** The start shared by reorder and edit-dock mode. False when there is nothing to move. */
     private boolean beginReorder() {
-        if (adapter.movableCount() < 2) return false;
+        if (allMovableKeys().size() < 2) return false;
         // Before the reload below: once it has dropped the empty slots, the dock row also shows grid apps.
         dockInSession = new HashSet<>();
-        dockedAtStart = adapter.dockFilled();
-        for (int i = 0; i < Math.min(dockedAtStart, adapter.movableCount()); i++) dockInSession.add(adapter.keyAt(i));
+        if (dockAdapter != null) {
+            dockedAtStart = dockAdapter.movableCount();
+            dockInSession.addAll(dockAdapter.movableKeys());
+        } else {
+            dockedAtStart = adapter.dockFilled();
+            for (int i = 0; i < Math.min(dockedAtStart, adapter.movableCount()); i++) {
+                dockInSession.add(adapter.keyAt(i));
+            }
+        }
         adapter.setReordering(true);
+        if (dockAdapter != null) dockAdapter.setReordering(true);
         if (adapter.hasEmptySlots()) reloadTiles();   // every position must hold a tile that can move
         reordering = true;
-        orderAtStart = adapter.movableKeys();
+        orderAtStart = allMovableKeys();
         glass.setAccent(REORDER_ACCENT);
-        btnReorder.setActivated(true);
+        if (btnReorder != null) btnReorder.setActivated(true);
         return true;
     }
 
@@ -1454,7 +1595,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (!beginReorder()) return;
         dockEditing = true;
         dockEditSlot = -1;
-        focusTile(0);
+        if (dockAdapter != null) focusDockTile(0);
+        else focusGridTile(0);
         Toast.makeText(this, R.string.dock_edit_hint, Toast.LENGTH_LONG).show();
     }
 
@@ -1477,7 +1619,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     int slot = dockEditSlot;
                     dockEditSlot = -1;
                     dimOthers();
-                    focusTile(slot);
+                    if (dockAdapter != null) focusDockTile(slot);
+                    else focusGridTile(slot);
                 } else {
                     endReorder();
                 }
@@ -1487,27 +1630,56 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         int pos = focusedTilePosition();
         if (ok && pos >= 0) {
             if (!down) {
-                int n = adapter.movableCount();
-                if (dockEditAppKey != null) {
-                    if (pos < Math.min(COLUMNS, n)) {
-                        int from = adapter.positionOf(dockEditAppKey);
-                        if (from >= 0) swapIntoDock(pos, from);
-                        else endReorder();
+                if (dockAdapter != null) {
+                    dispatchDockEditSplit(pos);
+                } else {
+                    int n = adapter.movableCount();
+                    if (dockEditAppKey != null) {
+                        if (pos < Math.min(COLUMNS, n)) {
+                            int from = adapter.positionOf(dockEditAppKey);
+                            if (from >= 0) swapIntoDock(pos, from);
+                            else endReorder();
+                        }
+                    } else if (dockEditSlot < 0) {
+                        if (pos < Math.min(COLUMNS, n)) {
+                            dockEditSlot = pos;
+                            dimOthers();
+                            focusGridTile(Math.min(COLUMNS, n - 1));
+                            Toast.makeText(this, R.string.dock_edit_pick_app, Toast.LENGTH_LONG).show();
+                        }
+                    } else if (pos < n) {
+                        swapIntoDock(dockEditSlot, pos);
                     }
-                } else if (dockEditSlot < 0) {
-                    if (pos < Math.min(COLUMNS, n)) {
-                        dockEditSlot = pos;
-                        dimOthers();
-                        focusTile(Math.min(COLUMNS, n - 1));
-                        Toast.makeText(this, R.string.dock_edit_pick_app, Toast.LENGTH_LONG).show();
-                    }
-                } else if (pos < n) {
-                    swapIntoDock(dockEditSlot, pos);
                 }
             }
             return true;   // never opens the app while editing
         }
         return super.dispatchKeyEvent(event);   // arrows navigate as usual
+    }
+
+    /** Split dock+grid: place picks use dockAdapter; app picks use the grid. */
+    private void dispatchDockEditSplit(int pos) {
+        boolean onDock = focusedIsDockTile();
+        int dockN = dockAdapter.movableCount();
+        int gridN = adapter.movableCount();
+        if (dockEditAppKey != null) {
+            // Add to dock: OK on a dock slot places the chosen grid app there.
+            if (onDock && pos >= 0 && pos < dockN) placeAppInDockSplit(pos, dockEditAppKey);
+            return;
+        }
+        if (dockEditSlot < 0) {
+            if (onDock && pos >= 0 && pos < dockN) {
+                dockEditSlot = pos;
+                dimOthers();
+                focusGridTile(Math.max(0, Math.min(lastGridFocused, gridN - 1)));
+                Toast.makeText(this, R.string.dock_edit_pick_app, Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        if (!onDock && pos >= 0 && pos < gridN) {
+            String key = adapter.keyAt(pos);
+            if (key != null) placeAppInDockSplit(dockEditSlot, key);
+        }
     }
 
     /**
@@ -1518,6 +1690,28 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (reordering) endReorder();
         if (!beginReorder()) return;
         dockEditing = true;
+        if (dockAdapter != null) {
+            if (inDock) {
+                int slot = dockAdapter.positionOf(key);
+                if (slot < 0) {
+                    endReorder();
+                    return;
+                }
+                dockEditSlot = slot;
+                dimOthers();
+                focusGridTile(Math.max(0, Math.min(lastGridFocused, adapter.movableCount() - 1)));
+                Toast.makeText(this, R.string.dock_edit_pick_app, Toast.LENGTH_LONG).show();
+            } else {
+                if (adapter.positionOf(key) < 0) {
+                    endReorder();
+                    return;
+                }
+                dockEditAppKey = key;
+                focusDockTile(0);
+                Toast.makeText(this, R.string.dock_edit_pick_place, Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
         int pos = adapter.positionOf(key);   // beginReorder can rebuild the tiles
         int n = adapter.movableCount();
         if (pos < 0) {
@@ -1525,11 +1719,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         } else if (inDock) {
             dockEditSlot = pos;
             dimOthers();
-            focusTile(Math.min(COLUMNS, n - 1));
+            focusGridTile(Math.min(COLUMNS, n - 1));
             Toast.makeText(this, R.string.dock_edit_pick_app, Toast.LENGTH_LONG).show();
         } else {
             dockEditAppKey = key;
-            focusTile(0);
+            focusGridTile(0);
             Toast.makeText(this, R.string.dock_edit_pick_place, Toast.LENGTH_LONG).show();
         }
     }
@@ -1549,32 +1743,112 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         refocusAfterLayout(slot);
     }
 
-    private void pickUp(int pos) {
-        if (pos >= adapter.movableCount()) return;   // the "Default home" tile stays put
-        movingKey = adapter.keyAt(pos);
+    /**
+     * Split layout: put {@code appKey} into dock slot {@code slot}, swap the displaced dock app into the grid
+     * (or swap within the dock), save order, and leave edit mode.
+     */
+    private void placeAppInDockSplit(int slot, String appKey) {
+        if (dockAdapter == null || appKey == null) {
+            endReorder();
+            return;
+        }
+        List<String> dockKeys = new ArrayList<>(dockAdapter.movableKeys());
+        List<String> gridKeys = new ArrayList<>(adapter.movableKeys());
+        if (slot < 0 || slot >= dockKeys.size()) {
+            endReorder();
+            return;
+        }
+        String displaced = dockKeys.get(slot);
+        if (appKey.equals(displaced)) {
+            finishDockEditSplit(slot);
+            return;
+        }
+        int gridAt = gridKeys.indexOf(appKey);
+        int dockAt = dockKeys.indexOf(appKey);
+        if (gridAt >= 0) {
+            dockKeys.set(slot, appKey);
+            gridKeys.set(gridAt, displaced);
+        } else if (dockAt >= 0) {
+            dockKeys.set(dockAt, displaced);
+            dockKeys.set(slot, appKey);
+        } else {
+            endReorder();
+            return;
+        }
+        List<String> keys = new ArrayList<>(dockKeys);
+        keys.addAll(gridKeys);
+        Order order = new Order(Order.dockKey(dockApps), keys, dockKeys.size());
+        if (!Order.save(Order.file(this), order)) {
+            Toast.makeText(this, R.string.reorder_not_saved, Toast.LENGTH_SHORT).show();
+            endReorder();
+            return;
+        }
+        applySavedOrder(order);
+        finishDockEditSplit(slot);
+        reloadTiles();
+        focusDockTile(slot);
+    }
+
+    /** Leaves dock-edit / reorder without a second save (order already written). */
+    private void finishDockEditSplit(int focusSlot) {
+        dockEditing = false;
+        dockEditSlot = -1;
+        dockEditAppKey = null;
+        drop();
+        reordering = false;
+        adapter.setReordering(false);
+        if (dockAdapter != null) dockAdapter.setReordering(false);
+        glass.setAccent(festive ? festival.accentColor() : 0);
+        if (btnReorder != null) btnReorder.setActivated(false);
+        orderAtStart = null;
+        dockInSession = null;
+        if (focusSlot >= 0) focusDockTile(focusSlot);
+    }
+
+    private void pickUp(int pos, boolean fromDock) {
+        AppAdapter src = fromDock && dockAdapter != null ? dockAdapter : adapter;
+        if (pos < 0 || pos >= src.movableCount()) return;   // the "Default home" tile stays put
+        movingKey = src.keyAt(pos);
+        movingFromDock = fromDock && dockAdapter != null;
         dimOthers();
     }
 
     /** Puts the carried tile down where it is; the mode stays on. */
     private void drop() {
         movingKey = null;
+        movingFromDock = false;
         dimOthers();
     }
 
-    /** While a tile is carried, every other tile is dimmed so the carried one stands out; otherwise all are full. */
+    /** While a tile is carried, dim only its zone (dock or grid) so the other row is not mixed in. */
     private void dimOthers() {
-        for (int i = 0; i < grid.getChildCount(); i++) {
-            View item = grid.getChildAt(i);
-            item.setAlpha(tileAlpha(grid.getChildAdapterPosition(item)));
+        dimRecyclerChildren(grid, adapter, false);
+        if (dockGrid != null) dimRecyclerChildren(dockGrid, dockAdapter, true);
+    }
+
+    private void dimRecyclerChildren(RecyclerView rv, AppAdapter src, boolean dock) {
+        if (rv == null || src == null) return;
+        for (int i = 0; i < rv.getChildCount(); i++) {
+            View item = rv.getChildAt(i);
+            int pos = rv.getChildAdapterPosition(item);
+            String key = pos != RecyclerView.NO_POSITION ? src.keyAt(pos) : null;
+            item.setAlpha(tileAlpha(key, pos, dock));
         }
     }
 
-    /** A tile's alpha: dim unless it is the carried one, or, in edit-dock mode, a dock tile other than the chosen place. */
-    private float tileAlpha(int pos) {
+    /**
+     * A tile's alpha: dim unless it is the carried one (same zone only), or edit-dock place highlight.
+     */
+    private float tileAlpha(String key, int pos, boolean dock) {
         if (movingKey != null) {
-            return pos != RecyclerView.NO_POSITION && movingKey.equals(adapter.keyAt(pos)) ? 1f : 0.45f;
+            // Other zone stays full — reorder never mixes dock and grid in one pick.
+            if (movingFromDock != dock) return 1f;
+            return movingKey.equals(key) ? 1f : 0.45f;
         }
-        if (dockEditSlot >= 0 && pos >= 0 && pos < COLUMNS && pos != dockEditSlot) return 0.45f;
+        if (dockEditSlot >= 0 && dock && pos >= 0 && pos != dockEditSlot) return 0.45f;
+        if (dockEditSlot >= 0 && !dock && dockAdapter == null && pos >= 0 && pos < COLUMNS && pos != dockEditSlot) {
+            return 0.45f;
+        }
         return 1f;
     }
 
@@ -1587,23 +1861,32 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         drop();
         reordering = false;
         adapter.setReordering(false);
+        if (dockAdapter != null) dockAdapter.setReordering(false);
         glass.setAccent(festive ? festival.accentColor() : 0);
-        btnReorder.setActivated(false);
-        List<String> keys = adapter.movableKeys();
+        if (btnReorder != null) btnReorder.setActivated(false);
+        // Split dock+grid: always persist dock keys ahead of grid keys so a later reload still fills the pill.
+        List<String> keys = allMovableKeys();
         List<String> before = orderAtStart;
         orderAtStart = null;
         // fill_dock false: the dock is what the owner put there, saved with its size, so the empty slots that
         // come back after the mode go after it (#499). With fill_dock true every dock slot holds an app anyway.
         int docked = -1;
-        if (fillDockLeavesSlots) {
+        if (dockAdapter != null) {
+            docked = dockInSession != null ? dockInSession.size() : dockAdapter.movableCount();
+            if (fillDockLeavesSlots) {
+                docked = DockSlots.dockCount(keys, COLUMNS, dockInSession);
+                keys = DockSlots.dockFirst(keys, COLUMNS, dockInSession);
+            }
+        } else if (fillDockLeavesSlots) {
             docked = DockSlots.dockCount(keys, COLUMNS, dockInSession);
             keys = DockSlots.dockFirst(keys, COLUMNS, dockInSession);
         }
         dockInSession = null;
-        if (!keys.equals(before) || (fillDockLeavesSlots && docked != dockedAtStart)) {
+        if (!keys.equals(before) || (fillDockLeavesSlots && docked != dockedAtStart)
+                || (dockAdapter != null && docked != dockedAtStart)) {
             Order order = new Order(Order.dockKey(dockApps), keys, docked);
             if (Order.save(Order.file(this), order)) {
-                adapter.setSavedOrder(Order.ranks(order, dockApps), Order.docked(order, dockApps));
+                applySavedOrder(order);
             } else {
                 Toast.makeText(this, R.string.reorder_not_saved, Toast.LENGTH_SHORT).show();
             }
@@ -1611,11 +1894,82 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (fillDockLeavesSlots) reloadTiles();   // the empty dock slots left out while reordering come back
     }
 
+    /** Dock keys then grid keys — the full Home order Order expects. */
+    private List<String> allMovableKeys() {
+        List<String> keys = new ArrayList<>();
+        if (dockAdapter != null) keys.addAll(dockAdapter.movableKeys());
+        if (adapter != null) keys.addAll(adapter.movableKeys());
+        return keys;
+    }
+
+    /** True when the saved order still names at least one configured dock_apps package. */
+    private static boolean orderIncludesDockApp(Order order, List<String> dockApps) {
+        if (order == null || dockApps == null || dockApps.isEmpty()) return true;
+        for (String key : order.keys) {
+            for (String pkg : dockApps) {
+                if (key.equals(pkg) || key.startsWith(pkg + "/")) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Pushes a saved order into both adapters so the next reload() agrees on dock vs grid. */
+    private void applySavedOrder(Order order) {
+        Map<String, Integer> ranks = Order.ranks(order, dockApps);
+        int docked = Order.docked(order, dockApps);
+        if (adapter != null) adapter.setSavedOrder(ranks, docked);
+        if (dockAdapter != null) dockAdapter.setSavedOrder(ranks, docked);
+    }
+
+    /**
+     * Drops an app from the dock into the grid below, keeps it on Home, and saves the order.
+     * Split dock+grid builds the full key list from both adapters; legacy single-recycler moves in place.
+     */
+    private void removeFromDock(String key) {
+        if (key == null) return;
+        if (dockAdapter != null) {
+            List<String> dockKeys = dockAdapter.movableKeys();
+            if (!dockKeys.contains(key)) return;
+            List<String> newDock = new ArrayList<>(dockKeys);
+            newDock.remove(key);
+            List<String> keys = new ArrayList<>(newDock);
+            keys.add(key);
+            keys.addAll(adapter.movableKeys());
+            Order order = new Order(Order.dockKey(dockApps), keys, newDock.size());
+            if (!Order.save(Order.file(this), order)) {
+                Toast.makeText(this, R.string.reorder_not_saved, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            applySavedOrder(order);
+            lastFocusedKey = key;
+            reloadTiles();
+            restoreFocus();
+            return;
+        }
+        if (!beginReorder()) return;
+        int from = adapter.positionOf(key);
+        int n = adapter.movableCount();
+        if (from < 0 || from >= Math.min(COLUMNS, n) || n <= COLUMNS) {
+            endReorder();
+            return;
+        }
+        keepScroll(() -> adapter.move(from, COLUMNS));
+        if (dockInSession != null) dockInSession.remove(key);
+        endReorder();
+        lastFocusedKey = key;
+        restoreFocus();
+    }
+
     /**
      * Moves the carried tile one step. Left and Right wrap across rows, like a list; Up and Down move a whole row,
      * and Down into a short last row lands on its last tile. Nothing moves past either end or up into the top bar.
+     * Split dock+grid: dock picks only move inside the dock; grid picks only move inside the grid.
      */
     private void moveBy(int keyCode) {
+        if (dockAdapter != null && movingFromDock) {
+            moveByDockOnly(keyCode);
+            return;
+        }
         int from = adapter.positionOf(movingKey);
         int n = adapter.movableCount();
         if (from < 0 || from >= n) {
@@ -1633,10 +1987,30 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         else to = from / COLUMNS < (n - 1) / COLUMNS ? n - 1 : from;
         if (to < 0 || to >= n || to == from) return;
         keepScroll(() -> adapter.move(from, to));
-        // The owner carries this tile: where it lands decides whether it is in the dock, not dock_apps (#499).
-        if (to < COLUMNS) dockInSession.add(movingKey);
-        else dockInSession.remove(movingKey);
+        // Legacy single-recycler: landing in the first row counts as dock.
+        if (dockAdapter == null) {
+            if (to < COLUMNS) dockInSession.add(movingKey);
+            else dockInSession.remove(movingKey);
+        }
         refocusAfterLayout(to);
+    }
+
+    /** Split layout: rearrange only inside the dock pill (Left/Right). No grid mixing. */
+    private void moveByDockOnly(int keyCode) {
+        int from = dockAdapter.positionOf(movingKey);
+        int n = dockAdapter.movableCount();
+        if (from < 0 || from >= n) {
+            drop();
+            return;
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) return;
+        int to = keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+                ? (rtlAppGrid ? from + 1 : from - 1)
+                : (rtlAppGrid ? from - 1 : from + 1);
+        if (to < 0 || to >= n || to == from) return;
+        dockAdapter.move(from, to);
+        focusDockTile(to);
+        dimOthers();
     }
 
     /**
@@ -1691,6 +2065,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     public void onLibraryRequested() {
         if (appLibrary != null) appLibrary.close();
+        if (recentsDialog != null) recentsDialog.close();
         if (openPopup != null) openPopup.dismiss();
         libraryFocusPending = false;
         libraryFromTopBar = false;
@@ -1738,11 +2113,23 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         Rect r = tileRect;
         r.set(0, 0, card.getWidth(), card.getHeight());
         root.offsetDescendantRectToMyCoords(card, r);
-        // Same GlassView rim as the apps below. Dock cards stay scale=1 so the rim fits inside the
-        // pill padding (DockPillFrameLayout still clips any tile overflow).
+        // Dock: border is drawn on the tile itself (AppAdapter foreground) so it stays flush —
+        // floating GlassView left a frosted top/bottom gap inside the rim. Grid keeps GlassView.
+        if (isDock) {
+            hideGlass();
+            showHero(position, r.top);
+            if (dockGrid != null) {
+                View item = (View) card.getParent();
+                if (item != null) {
+                    revealRect.set(0, 0, item.getWidth(), item.getHeight());
+                    dockGrid.requestChildRectangleOnScreen(item, revealRect, reducedMotion);
+                }
+            }
+            return;
+        }
         float pad = 6f * density;
-        float scale = (isDock && dockAdapter != null ? dockAdapter : adapter).focusScale();
-        float lift = advancedEffects && !isDock ? 4f * density : 0f;
+        float scale = adapter.focusScale();
+        float lift = advancedEffects ? 4f * density : 0f;
         float w = card.getWidth() * scale + 2 * pad;
         float h = card.getHeight() * scale + 2 * pad;
         float x = r.exactCenterX() - w / 2f;
@@ -1755,12 +2142,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             glass.setLayoutParams(lp);
             glass.setRadius(AppAdapter.cornerRadius(card.getWidth(), density) * scale);
         }
+        glass.setInset(pad);
         glassCardW = card.getWidth();
         glassTargetX = x;
         glassTargetY = y;
 
-        boolean coloured = (appGlow || cinematic && !cinematicWhiteFocus && isDock) && !festive;
-        int accent = coloured ? (isDock && dockAdapter != null ? dockAdapter : adapter).ambientColorAt(position) : 0;
+        boolean coloured = (appGlow || cinematic && !cinematicWhiteFocus) && !festive;
+        int accent = coloured ? adapter.ambientColorAt(position) : 0;
         if ((cinematic || appGlow) && !festive && accent != glassAccent) {
             glassAccent = accent;
             glass.setAccent(accent);
@@ -1785,13 +2173,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             springY.animateToFinalPosition(y - glassScrollShift);
         }
         View item = (View) card.getParent();
-        if (isDock) {
-            showHero(position, r.top);
-        } else {
-            showGlowOnly(position);
-            revealRect.set(0, -(int) pad * 2, item.getWidth(), item.getHeight() + (int) pad);
-            grid.requestChildRectangleOnScreen(item, revealRect, reducedMotion);
-        }
+        showGlowOnly(position);
+        revealRect.set(0, -(int) pad * 2, item.getWidth(), item.getHeight() + (int) pad);
+        grid.requestChildRectangleOnScreen(item, revealRect, reducedMotion);
     }
 
     public void onTileFocused(int position, View card) {
@@ -2369,9 +2753,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 grid.playSoundEffect(SoundEffectConstants.NAVIGATION_DOWN);
                 return true;
             }
-            boolean forward = rtlAppGrid ? keyCode == KeyEvent.KEYCODE_DPAD_LEFT : keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
-            if (forward && dockAdapter != null && position >= dockAdapter.getItemCount() - 1) return true;
-            if (!forward && position <= 0) return true;
+            // Handle Left/Right ourselves — a half-peeked edge icon is easy for Android's focus
+            // finder to miss, so it jumps up to the top pills instead of the next dock app.
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                boolean forward = rtlAppGrid ? keyCode == KeyEvent.KEYCODE_DPAD_LEFT : keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
+                int next = dockAdapter != null ? dockAdapter.nextFocusable(position, forward) : -1;
+                if (next < 0) return true;
+                focusDockTile(next);
+                dockGrid.playSoundEffect(forward
+                        ? SoundEffectConstants.NAVIGATION_RIGHT : SoundEffectConstants.NAVIGATION_LEFT);
+                return true;
+            }
             return false;
         }
 
@@ -2510,14 +2902,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private final List<View> topAppButtons = new ArrayList<>();
 
     /**
-     * Puts each top_bar_apps app in the top bar as a round pill with the app's own logo, left of the network pill.
-     * The logo keeps its colours: the pill style's tint, which turns the other icons white, is cleared.
+     * Puts each top_bar_apps entry in the top bar as a round pill, left of the network pill. App packages use the
+     * app's own logo (tint cleared so colours stay). Action words "back" and "recents" use a white system icon.
      */
     private void addTopBarApps(List<String> packages, Map<String, String> launchActions) {
         ViewGroup bar = findViewById(R.id.topButtons);
         PackageManager pm = getPackageManager();
         int size = Math.round(22 * density);
         for (String pkg : packages) {
+            if ("back".equals(pkg) || "recents".equals(pkg)) {
+                addTopBarAction(bar, pkg, size);
+                continue;
+            }
             Intent launch = pm.getLeanbackLaunchIntentForPackage(pkg);
             if (launch == null) launch = pm.getLaunchIntentForPackage(pkg);
             if (launch == null) continue;   // not installed, or disabled
@@ -2548,6 +2944,51 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             bar.addView(button, bar.indexOfChild(getResources().getBoolean(R.bool.rtl_menu_bar) ? btnVpn : btnWifi));
             topAppButtons.add(button);
         }
+    }
+
+    /**
+     * top_bar_apps "back" / "recents". Back uses HomeKeyService. Recents opens a card strip of apps Home
+     * launched (this box has no system Recents UI).
+     */
+    private void addTopBarAction(ViewGroup bar, String action, int size) {
+        int icon = "back".equals(action) ? R.drawable.ic_back : R.drawable.ic_recents;
+        int label = "back".equals(action) ? R.string.action_back : R.string.recents;
+        TextView button = (TextView) getLayoutInflater().inflate(R.layout.top_app_button, bar, false);
+        button.setId(View.generateViewId());
+        Drawable logo = getDrawable(icon);
+        if (logo == null) return;
+        logo = logo.mutate();
+        logo.setBounds(0, 0, size, size);
+        button.setCompoundDrawablesRelative(logo, null, null, null);
+        button.setContentDescription(getString(label));
+        if ("recents".equals(action)) {
+            btnRecentsTop = button;
+            button.setOnClickListener(v -> openRecents());
+        } else {
+            button.setOnClickListener(v -> {
+                if (!HomeKeyService.performAction(action)) {
+                    Toast.makeText(this, R.string.not_available, Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+        bar.addView(button, bar.indexOfChild(getResources().getBoolean(R.bool.rtl_menu_bar) ? btnVpn : btnWifi));
+        topAppButtons.add(button);
+    }
+
+    /** Top-bar Recents: card strip of Home-launched apps, with Close / Clear all. */
+    private void openRecents() {
+        if (appLibrary != null) appLibrary.close();
+        if (recentsDialog != null) recentsDialog.close();
+        if (openPopup != null) openPopup.dismiss();
+        recentsOpen = true;
+        recentsDialog = new RecentsDialog(this, animations, reducedMotion, () -> {
+            recentsDialog = null;
+            openPopup = null;
+            recentsOpen = false;
+            if (btnRecentsTop != null) btnRecentsTop.requestFocus();
+        });
+        openPopup = recentsDialog.popup;
+        recentsDialog.show();
     }
 
     @Override public void onLibraryUp() {
@@ -2679,14 +3120,31 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         clockBlock.setVisibility(valid ? View.VISIBLE : View.INVISIBLE);
         handler.removeCallbacks(clockCheck);
         if (valid) {
+            // Re-apply when DST flips (last Thu of October / last Fri of April).
+            applyEgyptClockZone(clockBlock);
             updateGreeting();
         } else {
             handler.postDelayed(clockCheck, 1_000L);
         }
     }
 
+    /** Home TextClocks use Egypt GMT+2/+3, not the box's broken Africa/Cairo zoneinfo. */
+    private static void applyEgyptClockZone(View root) {
+        if (root == null) return;
+        String tz = CairoAthan.egyptTimeZoneId();
+        applyEgyptClockZone(root, tz);
+    }
+
+    private static void applyEgyptClockZone(View v, String tz) {
+        if (v instanceof TextClock) ((TextClock) v).setTimeZone(tz);
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) applyEgyptClockZone(g.getChildAt(i), tz);
+        }
+    }
+
     private void updateGreeting() {
-        int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
+        int hour = CairoAthan.egyptCalendar().get(Calendar.HOUR_OF_DAY);
         int res;
         // Locale-specific day parts (app language on Android 13+).
         // Indonesian: Pagi 00-10, Siang 10-15, Sore 15-18, Malam 18-24.
@@ -3048,25 +3506,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         return SystemSettings.intent(this, standardAction);
     }
 
-    /** Hides the Inputs pill when it would have nothing to list: streaming boxes have no HDMI-in, AV or tuner. */
+    /** Shows the Inputs pill whenever show_inputs_pill is on (forced visible even on boxes with no HDMI-in). */
     private void updateInputsButton() {
-        if (!showInputsPill) {
-            btnInputs.setVisibility(View.GONE);
-            return;
-        }
-        boolean any = liveTvIntent() != null || !sourcePanelService.isEmpty()
-                || (coocaaSources && !CoocaaSources.list(this).isEmpty());
-        TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
-        if (!any && tim != null) {
-            for (TvInputInfo info : tim.getTvInputList()) {
-                // Inputs hidden in Settings > Inputs are left out of the menu, so they don't count here either.
-                if (info.isPassthroughInput() && !info.isHidden(this)) {
-                    any = true;
-                    break;
-                }
-            }
-        }
-        btnInputs.setVisibility(any ? View.VISIBLE : View.GONE);
+        btnInputs.setVisibility(showInputsPill ? View.VISIBLE : View.GONE);
     }
 
     /** boot_to_live_tv, or the Open on start app: the first time Home comes up after the TV starts, open that app
@@ -3148,6 +3590,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      *  throws SecurityException, which used to take Home down with it (YaOS before the manifest asked
      *  for ACCESS_TV_SOURCE). */
     private void openInput(String inputId) {
+        LastInput.record(this, inputId);
         // A CEC device is a child input of its HDMI port; the vendor source number belongs to the port
         // (MiTV-MFFU0). Only that lookup uses the parent: the generic path below still opens the child.
         String sourceId = inputId;
@@ -3195,6 +3638,70 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         open(new Intent(inputAction).setDataAndType(uri, "vnd.android.cursor.item/channel"));
     }
 
+    /** Inputs short-press with samsung_tv_host: switch the Samsung TV to the configured HDMI (satellite). */
+    private void switchSamsungInput() {
+        Toast.makeText(this, R.string.samsung_switching, Toast.LENGTH_SHORT).show();
+        SamsungTv.sendKey(this, samsungTvHost, samsungTvKey, err -> runOnUiThread(() -> {
+            if (err == null) {
+                Toast.makeText(this, R.string.samsung_switched, Toast.LENGTH_SHORT).show();
+            } else if (err.contains("Allow CleanTV")) {
+                Toast.makeText(this, R.string.samsung_allow, Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(this, err, Toast.LENGTH_LONG).show();
+            }
+        }));
+    }
+
+    /** Long-press Inputs: switch to the other HDMI port Home last used, without opening the list. */
+    private void openOtherInput() {
+        String other = LastInput.other(LastInput.current(this), LastInput.previous(this), connectedHdmiInputIds());
+        if (other == null || other.isEmpty()) {
+            Toast.makeText(this, R.string.no_other_input, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        openInput(other);
+    }
+
+    /** HDMI port ids that report connected (or standby-connected), parents only — not CEC children. */
+    private List<String> connectedHdmiInputIds() {
+        List<String> ids = new ArrayList<>();
+        TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+        if (tim == null) return ids;
+        Set<String> allIds = new HashSet<>();
+        for (TvInputInfo info : tim.getTvInputList()) allIds.add(info.getId());
+        for (TvInputInfo info : tim.getTvInputList()) {
+            if (!info.isPassthroughInput() || info.isHidden(this)) continue;
+            if (info.getType() != TvInputInfo.TYPE_HDMI) continue;
+            String parent = info.getParentId();
+            if (parent != null && allIds.contains(parent)) continue;
+            if (Integer.valueOf(-1).equals(mappedSource(info.getId()))) continue;
+            int state = tim.getInputState(info.getId());
+            if (state == TvInputManager.INPUT_STATE_CONNECTED
+                    || state == TvInputManager.INPUT_STATE_CONNECTED_STANDBY) {
+                ids.add(info.getId());
+            }
+        }
+        return ids;
+    }
+
+    /** Label for a remembered input id: custom name, then port label, then the id. */
+    private String inputDisplayLabel(String inputId) {
+        TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+        if (tim != null) {
+            try {
+                TvInputInfo info = tim.getTvInputInfo(inputId);
+                if (info != null) {
+                    CharSequence custom = InputNames.tidy(info.loadCustomLabel(this));
+                    if (custom != null && custom.length() > 0) return custom.toString();
+                    CharSequence label = info.loadLabel(this);
+                    if (label != null && label.length() > 0) return label.toString();
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return inputId;
+    }
+
     /** Dropdown menu under the Inputs pill: HDMI ports (with connection state), AV and Live TV. */
     private void showInputs() {
         // A configured source panel and no Live TV row to offer next to it: the panel is the whole menu.
@@ -3215,6 +3722,15 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // Compact: as wide as the Inputs pill (a touch wider so "HDMI 1" fits), hanging right below it.
         int width = Math.max(anchor.getWidth(), (int) (150 * density));
         final PopupWindow popup = glassPopup(panel, width);
+
+        // One-tap jump back to the other HDMI Home last used (same target as long-press on the Inputs pill).
+        String otherId = LastInput.other(LastInput.current(this), LastInput.previous(this), connectedHdmiInputIds());
+        if (otherId != null && !otherId.isEmpty()) {
+            addInputRow(rows, popup, R.drawable.ic_input,
+                    getString(R.string.back_to_input, inputDisplayLabel(otherId)),
+                    TvInputManager.INPUT_STATE_CONNECTED, () -> openInput(otherId));
+            addSeparator(rows);
+        }
 
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         // inputs_connected_only: ports without a connected device and the AV jacks fold behind a "More inputs" row.
@@ -3538,32 +4054,47 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     /**
      * Hold OK on a tile: a glass menu next to it. Move starts reorder mode with this tile already picked up;
-     * Remove from Home takes the shortcut off (only with the app library on, where one press adds it back);
+     * Remove from dock / Add to dock edits the dock; Remove from Home takes the shortcut off (library on);
      * App info opens the TV's page for the app, which is what holding OK used to do.
      */
     @Override
-    public void onTileLongPress(int position, View card) {
+    public void onTileLongPress(int position, View card, boolean isDock) {
         if (reordering) return;
-        String key = adapter.keyAt(position);
-        String pkg = adapter.packageAt(position);
+        AppAdapter src = isDock && dockAdapter != null ? dockAdapter : adapter;
+        if (src == null) return;
+        String key = src.keyAt(position);
+        String pkg = src.packageAt(position);
         // Empty dock slots and the Default-home tile carry the launcher's own package: no menu for them.
         if (key == null || pkg == null || pkg.equals(getPackageName())) return;
         View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
         LinearLayout rows = panel.findViewById(R.id.rows);
         PopupWindow popup = glassPopup(panel, (int) (200 * density));
-        if (dockRow && position < adapter.movableCount()) {
-            boolean inDock = position < COLUMNS;
-            addSettingsMenuRow(rows, popup, inDock ? R.string.tile_replace_in_dock : R.string.tile_add_to_dock,
-                    () -> startDockEditFor(key, inDock));
+        boolean inDock = isDock || (dockAdapter == null && dockRow && position < COLUMNS);
+        if (dockRow && position < src.movableCount()) {
+            if (inDock) {
+                addSettingsMenuRow(rows, popup, R.string.tile_remove_from_dock, () -> removeFromDock(key));
+                // Replace still uses the single-recycler edit path; skip it for the split dock.
+                if (dockAdapter == null) {
+                    addSettingsMenuRow(rows, popup, R.string.tile_replace_in_dock,
+                            () -> startDockEditFor(key, true));
+                }
+            } else {
+                addSettingsMenuRow(rows, popup, R.string.tile_add_to_dock,
+                        () -> startDockEditFor(key, false));
+            }
         }
-        if (position < adapter.movableCount()) addSettingsMenuRow(rows, popup, R.string.tile_move, () -> {
-            if (!beginReorder()) return;
-            int at = adapter.positionOf(key);   // beginReorder can rebuild the tiles
-            if (at < 0) return;
-            focusTile(at);
-            pickUp(at);
-            Toast.makeText(this, R.string.reorder_hint, Toast.LENGTH_LONG).show();
-        });
+        AppAdapter moveSrc = isDock && dockAdapter != null ? dockAdapter : adapter;
+        if (position < moveSrc.movableCount()) {
+            addSettingsMenuRow(rows, popup, R.string.tile_move, () -> {
+                if (!beginReorder()) return;
+                int at = moveSrc.positionOf(key);   // beginReorder can rebuild the tiles
+                if (at < 0) return;
+                if (isDock) focusDockTile(at);
+                else focusGridTile(at);
+                pickUp(at, isDock);
+                Toast.makeText(this, R.string.reorder_hint, Toast.LENGTH_LONG).show();
+            });
+        }
         if (appLibraryEnabled) addSettingsMenuRow(rows, popup, R.string.library_remove_shortcut, () -> {
             if (LibraryApps.save(this, pkg, false)) reloadApps(false);
             else Toast.makeText(this, R.string.library_save_failed, Toast.LENGTH_LONG).show();
@@ -3571,6 +4102,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // Some firmware has no App info page at all; a row that only toasts "can't open" helps nobody.
         Intent info = SystemSettings.appInfo(this, pkg);
         if (info != null) addSettingsMenuRow(rows, popup, R.string.library_app_info, () -> open(info));
+        if (rows.getChildCount() == 0) {
+            popup.dismiss();
+            return;
+        }
         panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
         popup.setWidth(Math.max((int) (200 * density), panel.getMeasuredWidth()));
         // Dock tiles sit near the bottom of the screen: open the menu above the tile when it would not fit below.

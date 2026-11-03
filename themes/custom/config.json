@@ -13,12 +13,12 @@
   "dock_row": true,
   "dock_title": false,
   "fill_dock": true,
-  "always_show_names": false,
+  "always_show_names": true,
   "icon_only_buttons": true,
   "icon_only_inputs": true,
   "top_menu": false,
   "launcher_settings_button": false,
-  "reorder_button": false,
+  "reorder_button": true,
   "show_network_pill": true,
   "show_inputs_pill": true,
   "wifi_status_color": true,
@@ -66,5 +66,9 @@
     "com.sony.dtv.tvx",
     "com.sony.dtv.tvxlauncher.programguide"
   ],
-  "live_tv_package": "com.sony.dtv.tvx"
+  "live_tv_package": "com.sony.dtv.tvx",
+  "top_bar_apps": [
+    "recents"
+  ],
+  "restore_key_services": true
 }

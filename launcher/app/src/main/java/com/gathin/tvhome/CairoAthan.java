@@ -2,6 +2,7 @@ package com.gathin.tvhome;
 
 import java.util.Calendar;
 import java.util.Locale;
+import java.util.TimeZone;
 
 /**
  * 100% offline, zero-network mathematical solar calculation of prayer times for Cairo, Egypt.
@@ -76,10 +77,9 @@ final class CairoAthan {
     private CairoAthan() {
     }
 
-    /** Calculates Cairo prayer times for today using current device date/time. */
+    /** Calculates Cairo prayer times for today using Egypt wall-clock (not device zoneinfo). */
     static Schedule today() {
-        Calendar cal = Calendar.getInstance();
-        return forDate(cal);
+        return forDate(egyptCalendar());
     }
 
     static Schedule forDate(Calendar cal) {
@@ -169,6 +169,35 @@ final class CairoAthan {
             return OFFSET_SUMMER_HOURS;
         }
         return OFFSET_STANDARD_HOURS;
+    }
+
+    /**
+     * Fixed-offset id for {@link android.widget.TextClock#setTimeZone(String)}.
+     * Xiaomi / Android 11 {@code Africa/Cairo} zoneinfo often still ends DST too early.
+     */
+    static String egyptTimeZoneId() {
+        Calendar egypt = egyptCalendar();
+        int hours = (int) Math.round(egyptOffsetHours(
+                egypt.get(Calendar.YEAR),
+                egypt.get(Calendar.MONTH) + 1,
+                egypt.get(Calendar.DAY_OF_MONTH)));
+        return String.format(Locale.US, "GMT+%02d:00", hours);
+    }
+
+    /** Egypt wall-clock calendar (DST-aware), ignoring the device's outdated Cairo tables. */
+    static Calendar egyptCalendar() {
+        long now = System.currentTimeMillis();
+        // Provisional +3 to pick the calendar date, then lock to the real offset for that date.
+        Calendar c = Calendar.getInstance(TimeZone.getTimeZone("GMT+03:00"));
+        c.setTimeInMillis(now);
+        int hours = (int) Math.round(egyptOffsetHours(
+                c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH)));
+        if (hours != 3) {
+            c = Calendar.getInstance(TimeZone.getTimeZone(
+                    String.format(Locale.US, "GMT+%02d:00", hours)));
+            c.setTimeInMillis(now);
+        }
+        return c;
     }
 
     /** Day-of-month for the last {@code weekday} in {@code month} (1=Jan … 12=Dec). */

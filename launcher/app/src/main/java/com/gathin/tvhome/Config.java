@@ -119,7 +119,7 @@ final class Config {
     final boolean reorderButton;
     /** Show the Wi-Fi/Ethernet pill in the top bar (config.xml, show_network_pill). */
     final boolean showNetworkPill;
-    /** Show the Inputs pill when the TV has inputs to list (config.xml, show_inputs_pill). */
+    /** Show the Inputs pill in the top bar (config.xml, show_inputs_pill); forced on even with no HDMI-in. */
     final boolean showInputsPill;
     /** Wi-Fi and Settings pills as round icon buttons, Inputs keeps its label (config.xml icon_only_buttons). */
     final boolean iconOnlyButtons;
@@ -262,6 +262,10 @@ final class Config {
     public final boolean showAthan;
     public final boolean showProfile;
     public final List<String> tvSources;
+    /** LAN IP/host of a Samsung Tizen TV; Inputs sends {@link #samsungTvKey} to it (empty = local inputs only). */
+    final String samsungTvHost;
+    /** Samsung remote key for Inputs, e.g. KEY_HDMI1 for the satellite box. */
+    final String samsungTvKey;
 
     private Config(List<String> dockApps, boolean fillDock, List<String> hiddenApps, List<String> libraryApps, String liveTvPackage,
                    String liveTvAction, String liveTvInputId, Map<String, String> launchActions, Map<String, String> appLabels,
@@ -277,7 +281,8 @@ final class Config {
                    boolean keyFilter, boolean dockGlass, String glowStyle, boolean wallpaperCaptions,
                    boolean handleViewInputs, boolean tileMenu, boolean dockEvenPadding, boolean dockBand, boolean cinematicDots, boolean cinematicWhiteFocus, boolean wifiStatusColor, int cinematicScrim, int cinematicArt,
                    Map<String, Set<String>> wallpaperMoods, boolean gamepadPassthrough, boolean consumeVolumeKeys, boolean powerOnHome, boolean homeLongPressHome, boolean wifiStatusWarnings, List<String> topBarApps, boolean showGreeting, boolean headerWhite, boolean clockWallpaper, int clockWallpaperDim, boolean clockGlow, String glassStyle, boolean singleRow, boolean dockBandAll, boolean lunarDate, int lunarUtcOffset, boolean dateBelowClock, boolean vpnPill, String locale, boolean powerOnHomeAlways, boolean inputsConnectedOnly,
-                   boolean showWeather, boolean showAthan, boolean showProfile, List<String> tvSources) {
+                   boolean showWeather, boolean showAthan, boolean showProfile, List<String> tvSources,
+                   String samsungTvHost, String samsungTvKey) {
         this.handleViewInputs = handleViewInputs;
         this.tileMenu = tileMenu;
         this.inputKeycodes = inputKeycodes;
@@ -389,6 +394,8 @@ final class Config {
         this.showAthan = showAthan;
         this.showProfile = showProfile;
         this.tvSources = Collections.unmodifiableList(tvSources);
+        this.samsungTvHost = samsungTvHost;
+        this.samsungTvKey = samsungTvKey;
     }
 
     /** A known glow_style, or radial (the default) for anything else. */
@@ -512,6 +519,8 @@ final class Config {
         boolean showAthan = res.getBoolean(R.bool.show_athan);
         boolean showProfile = res.getBoolean(R.bool.show_profile);
         List<String> tvSources = new ArrayList<>(Arrays.asList(res.getStringArray(R.array.tv_sources)));
+        String samsungTvHost = res.getString(R.string.samsung_tv_host).trim();
+        String samsungTvKey = res.getString(R.string.samsung_tv_key).trim();
         boolean applied = false;
 
         File dir = dir(ctx);
@@ -622,9 +631,14 @@ final class Config {
             showAthan = bool(json, "show_athan", showAthan);
             showProfile = bool(json, "show_profile", showProfile);
             tvSources = stringList(json, "tv_sources", tvSources);
+            samsungTvHost = string(json, "samsung_tv_host", samsungTvHost).trim();
+            samsungTvKey = string(json, "samsung_tv_key", samsungTvKey).trim();
         }
-        // A top-bar app is moved there, not copied: it leaves the grid.
-        for (String pkg : topBarApps) if (!hidden.contains(pkg)) hidden.add(pkg);
+        // A top-bar app is moved there, not copied: it leaves the grid. Action words stay (not packages).
+        for (String pkg : topBarApps) {
+            if (RemoteKeys.isAction(pkg) || hidden.contains(pkg)) continue;
+            hidden.add(pkg);
+        }
         // A theme push or reset invalidates choices made on the TV. On first use, remember the
         // current theme without clearing choices from an older launcher version.
         SharedPreferences choices = ctx.getSharedPreferences(SETTINGS_NAME, Context.MODE_PRIVATE);
@@ -683,7 +697,7 @@ final class Config {
                 consumeVolumeKeys, powerOnHome, homeLongPressHome, wifiStatusWarnings, topBarApps, showGreeting, headerWhite, clockWallpaper,
                 Math.max(0, Math.min(90, clockWallpaperDim)), clockGlow, glassStyle, singleRow && dockRow, dockBandAll, lunar, lunarOffset,
                 dateBelowClock, vpnPill, locale, powerOnHomeAlways, inputsConnectedOnly,
-                showWeather, showAthan, showProfile, tvSources);
+                showWeather, showAthan, showProfile, tvSources, samsungTvHost, samsungTvKey);
     }
 
     /**

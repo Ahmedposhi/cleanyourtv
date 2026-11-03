@@ -22,6 +22,8 @@ public class GlassView extends View {
     private final RectF rect = new RectF();
     private final float density;
     private float radius;
+    /** Room outside the rim for the soft glow; must match MainActivity's glass pad. */
+    private float inset;
     /** Glow colour as 0xRRGGBB: white normally, a festival's accent (diya gold) while a festive skin is on. */
     private int glowRgb = 0xFFFFFF;
     /** Glow strength: the white glow stays faint, a coloured one needs more alpha to read as warm light. */
@@ -34,6 +36,7 @@ public class GlassView extends View {
         super(context, attrs);
         density = getResources().getDisplayMetrics().density;
         radius = 20f * density;
+        inset = 6f * density;
         rim.setStyle(Paint.Style.STROKE);
         rim.setStrokeWidth(1.5f * density);
         rim.setColor(0xCCFFFFFF);
@@ -74,6 +77,13 @@ public class GlassView extends View {
         invalidate();
     }
 
+    /** Glow/rim inset in px; keep in sync with the pad used when sizing this view. */
+    void setInset(float px) {
+        if (inset == px) return;
+        inset = Math.max(1f, px);
+        invalidate();
+    }
+
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
@@ -83,7 +93,6 @@ public class GlassView extends View {
 
     @Override
     protected void onDraw(Canvas canvas) {
-        float inset = 6f * density;   // room for the glow
         rect.set(inset, inset, getWidth() - inset, getHeight() - inset);
 
         // Outer glow: thin rings across the inset, each a little fainter, so it fades out smoothly. Three wide

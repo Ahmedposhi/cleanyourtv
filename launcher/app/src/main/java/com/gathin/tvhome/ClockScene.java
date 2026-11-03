@@ -14,7 +14,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.ImageView;
+import android.widget.TextClock;
 
 import java.io.File;
 import java.time.LocalDateTime;
@@ -83,6 +85,16 @@ final class ClockScene {
                 glow.setGradientRadius((r - l) * 0.55f));
         colorIndex = random.nextInt(PALETTE.length);
         setGlow(PALETTE[colorIndex]);
+        // Same Egypt offset as Home — Xiaomi Africa/Cairo zoneinfo is often one hour behind.
+        applyEgyptZone(content, CairoAthan.egyptTimeZoneId());
+    }
+
+    private static void applyEgyptZone(View v, String tz) {
+        if (v instanceof TextClock) ((TextClock) v).setTimeZone(tz);
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) applyEgyptZone(g.getChildAt(i), tz);
+        }
     }
 
     void start() {
